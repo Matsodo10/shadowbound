@@ -966,6 +966,12 @@ function draw(){
       ctx.font = "24px Arial";
       ctx.fillStyle = `rgba(150,255,150,${fadeOut*0.7 + 0.3})`;
       ctx.fillText(t("clickStart"), canvas.width/2, canvas.height/2+80);
+      
+      // Auto-transition zum Menu nach 5 Sekunden
+      if(introTime > 33) {
+        gameState = "menu";
+        introTime = 0;
+      }
     }
     
     introTime += 1/60;
