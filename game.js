@@ -12,7 +12,7 @@ const TILE = 64;
 const GRAVITY = 0.6;
 const JUMP_FORCE = 12;
 // ---- GAME STATE ----
-let gameState = "language"; // language | intro | menu | play | end | pause | settings
+let gameState = "menu"; // menu | play | end | pause | settings
 let language = localStorage.getItem("shadowbound_lang") || "de"; // de | en
 let levelIndex = 0;
 let map;
@@ -287,37 +287,70 @@ canvas.addEventListener("touchend", e => {
 }, false);
 
 canvas.onclick = (e) => {
-  if(gameState==="language"){
-    // Sprachauswahl Clicks
+  if(gameState==="menu"){ 
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Deutsch Button
-    if(x > canvas.width/2 - 180 && x < canvas.width/2 - 30 && y > canvas.height/2 - 20 && y < canvas.height/2 + 60) {
+    // Play Button
+    if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height/2 - 50 && y < canvas.height/2 + 30) {
+      initAudio();
+      gameState="play"; 
+      startTime=performance.now(); 
+      initLevel(); 
+      playBackgroundMusic();
+      window.menuStartTime = null;
+    }
+    // Settings Button
+    else if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height/2 + 60 && y < canvas.height/2 + 140) {
+      gameState = "settings";
+    }
+  }
+  else if(gameState === "settings") {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Deutsch Language Button
+    if(x > canvas.width/2 - 300 && x < canvas.width/2 - 180 && y > 200 && y < 250) {
       language = "de";
       localStorage.setItem("shadowbound_lang", "de");
-      gameState = "intro";
-      introTime = 0;
     }
-    // English Button
-    else if(x > canvas.width/2 + 30 && x < canvas.width/2 + 180 && y > canvas.height/2 - 20 && y < canvas.height/2 + 60) {
+    // English Language Button
+    else if(x > canvas.width/2 + 180 && x < canvas.width/2 + 300 && y > 200 && y < 250) {
       language = "en";
       localStorage.setItem("shadowbound_lang", "en");
-      gameState = "intro";
-      introTime = 0;
+    }
+    // Back Button
+    else if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height - 100 && y < canvas.height - 40) {
+      gameState = "menu";
     }
   }
-  else if(gameState==="intro"){
-    gameState="menu";
-    introTime = 0;
+  else if(gameState==="end"){ 
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height/2 + 150 && y < canvas.height/2 + 220) {
+      gameState="menu"; 
+      levelIndex=0; 
+      map=levels[0]; 
+      score=0;
+      difficulty=1;
+      resetPlayer();
+      window.menuStartTime = null;
+    }
   }
-  else if(gameState==="menu"){ 
-    initAudio();
-    gameState="play"; 
-    startTime=performance.now(); 
-    initLevel(); 
-    playBackgroundMusic();
+  else if(dead) {
+    // Klick auf Game Over Screen: zurück zum Menu
+    gameState = "menu";
+    levelIndex = 0;
+    map = levels[0];
+    score = 0;
+    difficulty = 1;
+    dead = false;
+    resetPlayer();
+    window.menuStartTime = null;
   }
   canvas.requestPointerLock();
 };
@@ -437,6 +470,20 @@ function castRays(){
       ctx.moveTo(x_pos + w*0.5, y_pos - 200);
       ctx.lineTo(x_pos + w*0.5, y_pos + h);
       ctx.stroke();
+    }
+  }
+  
+  // BODEN zeichnen
+  ctx.fillStyle = "rgba(40,40,60,0.8)";
+  ctx.fillRect(0, canvas.height/2 + 100, canvas.width, canvas.height/2 - 100);
+  
+  // Boden Pattern
+  for(let i = 0; i < RAYS; i++) {
+    const x_pos = i*canvas.width/RAYS;
+    const pattern = Math.floor(i/10) % 2;
+    if(pattern === 0) {
+      ctx.fillStyle = "rgba(50,50,80,0.3)";
+      ctx.fillRect(x_pos, canvas.height/2 + 100, canvas.width/RAYS, canvas.height/2 - 100);
     }
   }
 }
@@ -577,20 +624,27 @@ function update(){
   // TILE CHECK
   const tile = map[ty]?.[tx];
   
-  // Nur alle 0.5 Sekunden Schaden nehmen, wenn im Licht
+  // Licht-Schaden: Schneller Schaden wenn im Licht
   if (tile===0 && player.z===0) { 
-    if(time % 2 === 0) { // Alle 2 Sekunden 5 Schaden
-      player.health = Math.max(0, player.health - 5);
+    if(time % 1 === 0) { // Jede Sekunde 10 Schaden
+      player.health = Math.max(0, player.health - 10);
+      createParticles(player.x, player.y, 5, {r:255,g:200,b:0});
     }
-  } else if(tile===1 && player.z===0) {
-    // Im Schatten - langsam regenerieren (alle 3 Sekunden +2 Health)
-    if(time % 3 === 0 && player.health < 100) {
-      player.health = Math.min(100, player.health + 2);
+  } 
+  // Schatten-Heilung
+  else if(tile===1 && player.z===0) {
+    // Im Schatten - langsam regenerieren (alle 2 Sekunden +3 Health)
+    if(time % 2 === 0 && player.health < 100) {
+      player.health = Math.min(100, player.health + 3);
     }
   }
   
-  if(player.health <= 0) die();
-  if (tile===2) nextLevel();
+  if(player.health <= 0) {
+    die();
+  }
+  if (tile===2) {
+    nextLevel();
+  }
 }
 
 // ---- DIE & LEVEL ----
@@ -668,39 +722,78 @@ function resetPlayer(){
 function drawUI(){
   // Settings Menu
   if(gameState === "settings") {
-    ctx.fillStyle = "rgba(0,0,0,0.9)";
+    ctx.fillStyle = "rgba(0,0,0,0.95)";
     ctx.fillRect(0,0,canvas.width,canvas.height);
+    
+    // Titel
     ctx.fillStyle = "white";
-    ctx.font = "50px Arial";
+    ctx.font = "bold 50px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("⚙️ EINSTELLUNGEN", canvas.width/2, 80);
+    ctx.fillText("⚙️ SETTINGS", canvas.width/2, 80);
     
-    ctx.font = "24px Arial";
-    const settingsY = 150;
-    const lineHeight = 50;
+    // Language Section
+    ctx.font = "28px Arial";
+    ctx.fillStyle = "#FFD700";
+    ctx.fillText("🌐 Language", canvas.width/2, 160);
     
-    // Sound
-    ctx.fillText("🔊 Sound: " + (soundEnabled ? "AN ✓" : "AUS ✗"), canvas.width/2, settingsY);
+    ctx.font = "22px Arial";
+    ctx.fillStyle = "white";
     
-    // Musik
-    ctx.fillText("🎵 Musik: " + (musicEnabled ? "AN ✓" : "AUS ✗"), canvas.width/2, settingsY + lineHeight);
+    // Deutsch Button
+    ctx.fillStyle = language === "de" ? "rgba(100,200,100,0.8)" : "rgba(100,100,150,0.6)";
+    ctx.fillRect(canvas.width/2 - 300, 200, 120, 50);
+    ctx.strokeStyle = language === "de" ? "rgba(200,255,200,1)" : "rgba(150,150,200,1)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(canvas.width/2 - 300, 200, 120, 50);
+    ctx.fillStyle = "white";
+    ctx.font = "20px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("🇩🇪 Deutsch", canvas.width/2 - 240, 230);
     
-    // Sensibilität
-    ctx.fillText("🎯 Sensibilität: " + (mouseSensitivity*1000).toFixed(1) + "%", canvas.width/2, settingsY + lineHeight*2);
+    // English Button
+    ctx.fillStyle = language === "en" ? "rgba(100,200,100,0.8)" : "rgba(100,100,150,0.6)";
+    ctx.fillRect(canvas.width/2 + 180, 200, 120, 50);
+    ctx.strokeStyle = language === "en" ? "rgba(200,255,200,1)" : "rgba(150,150,200,1)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(canvas.width/2 + 180, 200, 120, 50);
+    ctx.fillStyle = "white";
+    ctx.fillText("🇬🇧 English", canvas.width/2 + 240, 230);
+    
+    // Sound Section
+    ctx.font = "28px Arial";
+    ctx.fillStyle = "#FFD700";
+    ctx.textAlign = "center";
+    ctx.fillText("🔊 Sound", canvas.width/2, 320);
+    
+    ctx.font = "22px Arial";
+    ctx.fillStyle = soundEnabled ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
+    ctx.fillText(soundEnabled ? "✓ ON" : "✗ OFF", canvas.width/2, 365);
+    
+    // Music Section
+    ctx.fillStyle = "#FFD700";
+    ctx.font = "28px Arial";
+    ctx.fillText("🎵 Music", canvas.width/2, 430);
+    
+    ctx.font = "22px Arial";
+    ctx.fillStyle = musicEnabled ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
+    ctx.fillText(musicEnabled ? "✓ ON" : "✗ OFF", canvas.width/2, 475);
     
     // Controls Hint
     ctx.font = "18px Arial";
     ctx.fillStyle = "rgba(200,200,200,0.8)";
-    ctx.fillText("Q/E zum Ändern | S zum Schließen | Mobile: Tippen Sie auf Werte", canvas.width/2, canvas.height - 100);
-    ctx.textAlign = "left";
+    ctx.fillText("M = Sound Toggle | U = Music Toggle | S = Close | Click Language to Change", canvas.width/2, 540);
     
-    // Mobile Buttons für Settings
-    if(showMobileControls) {
-      ctx.fillStyle = "rgba(100,255,100,0.6)";
-      ctx.fillRect(canvas.width/2 - 100, settingsY + 50, 60, 40);
-      ctx.fillStyle = "white";
-      ctx.fillText("ZURÜCK", canvas.width/2 - 95, settingsY + 75);
-    }
+    // Back Button
+    ctx.fillStyle = "rgba(200,100,100,0.7)";
+    ctx.fillRect(canvas.width/2 - 150, canvas.height - 100, 300, 60);
+    ctx.strokeStyle = "rgba(255,150,150,1)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(canvas.width/2 - 150, canvas.height - 100, 300, 60);
+    ctx.fillStyle = "white";
+    ctx.font = "bold 24px Arial";
+    ctx.fillText("⬅ BACK TO MENU (S)", canvas.width/2, canvas.height - 65);
+    
+    ctx.textAlign = "left";
     return;
   }
 
@@ -763,16 +856,51 @@ function drawUI(){
 
   // Dead Screen
   if(dead){ 
-    ctx.fillStyle="rgba(255,0,0,0.5)"; 
+    ctx.fillStyle="rgba(255,0,0,0.7)"; 
     ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle="red"; 
-    ctx.font="60px Arial"; 
-    ctx.fillText("YOU BURNED ☀️",canvas.width/2-250,canvas.height/2-40); 
+    
+    ctx.fillStyle="rgba(255,50,50,1)"; 
+    ctx.font="bold 80px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("💀 YOU BURNED ☀️ 💀", canvas.width/2, canvas.height/2-80);
+    
+    ctx.fillStyle="white";
+    ctx.font="40px Arial"; 
+    ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2+20);
+    
+    ctx.fillStyle="rgba(255,255,100,0.9)";
     ctx.font="30px Arial"; 
-    ctx.fillText("Final Score: "+score,canvas.width/2-150,canvas.height/2+40);
-    ctx.font="20px Arial"; 
-    ctx.fillText("Press R to Restart",canvas.width/2-100,canvas.height/2+90); 
-    if(keys["r"]) resetPlayer(); 
+    ctx.fillText("Final Score: "+score, canvas.width/2, canvas.height/2+100);
+    
+    ctx.fillStyle="rgba(100,255,100,0.8)";
+    ctx.font="24px Arial"; 
+    ctx.fillText("Press R to Retry Level | CLICK for Menu", canvas.width/2, canvas.height/2+160); 
+    
+    if(keys["r"]) {
+      // Nur das Level neu starten - Score und Difficulty bleiben!
+      dead = false;
+      player.health = 100;
+      player.x = 2.5*TILE;
+      player.y = 1.5*TILE;
+      player.z = 0;
+      player.vz = 0;
+      player.speedBoost = 0;
+      startTime = performance.now();
+      guards = [];
+      particles = [];
+      powerUps = [];
+      const guardCount = 1 + difficulty;
+      for(let i=0; i<guardCount; i++){
+        guards.push({
+          x: Math.random()*map[0].length*TILE,
+          y: Math.random()*map.length*TILE,
+          health: 50,
+          speed: 0.5 + difficulty*0.3,
+          angle: Math.random()*Math.PI*2,
+          range: 3
+        });
+      }
+    }
   }
 }
 
@@ -898,115 +1026,69 @@ function draw(){
     return;
   }
   
-  if(gameState==="intro"){
-    // Story Intro Szene
+  if(gameState==="menu"){
+    // Premium Start Menu
     const gradient = ctx.createLinearGradient(0,0,0,canvas.height);
-    gradient.addColorStop(0,"#1a0a2e");
+    gradient.addColorStop(0,"#0a0e27");
     gradient.addColorStop(0.5,"#16213e");
     gradient.addColorStop(1,"#0f3460");
     ctx.fillStyle = gradient;
     ctx.fillRect(0,0,canvas.width,canvas.height);
     
-    // Intro-Sequenzen
-    const introPhase = Math.floor(introTime / 7); // Jede Phase 7 Sekunden
-    const phaseProgress = (introTime % 7) / 7;
-    
-    ctx.textAlign = "center";
-    ctx.fillStyle = "white";
-    
-    if(introPhase === 0) {
-      ctx.font = "60px Arial";
-      ctx.fillStyle = `rgba(255,100,100,${Math.min(1, phaseProgress*2)})`;
-      ctx.fillText("🧛 " + t("shadowbound") + " 🧛", canvas.width/2, canvas.height/2-150);
-      
-      ctx.font = "28px Arial";
-      ctx.fillStyle = `rgba(200,200,200,${Math.min(1, phaseProgress*2)})`;
-      ctx.fillText(t("storyTitle"), canvas.width/2, canvas.height/2);
-    }
-    else if(introPhase === 1) {
-      ctx.font = "32px Arial";
-      ctx.fillStyle = `rgba(255,200,100,${Math.min(1, phaseProgress*1.5)})`;
-      ctx.fillText(t("wakeUp"), canvas.width/2, canvas.height/2-100);
-      ctx.fillText(t("sunBurns"), canvas.width/2, canvas.height/2);
-      
-      ctx.font = "24px Arial";
-      ctx.fillStyle = `rgba(255,150,150,${Math.min(1, phaseProgress*1.5)})`;
-      ctx.fillText(t("vampireBody"), canvas.width/2, canvas.height/2+100);
-    }
-    else if(introPhase === 2) {
-      ctx.font = "32px Arial";
-      ctx.fillStyle = `rgba(100,255,100,${Math.min(1, phaseProgress*1.5)})`;
-      ctx.fillText(t("shadowsSave"), canvas.width/2, canvas.height/2-100);
-      
-      ctx.font = "24px Arial";
-      ctx.fillStyle = `rgba(150,200,255,${Math.min(1, phaseProgress*1.5)})`;
-      ctx.fillText(t("hideSun"), canvas.width/2, canvas.height/2);
-      ctx.fillText(t("findSafety"), canvas.width/2, canvas.height/2+80);
-    }
-    else if(introPhase === 3) {
-      ctx.font = "28px Arial";
-      ctx.fillStyle = `rgba(200,100,200,${Math.min(1, phaseProgress*1.5)})`;
-      ctx.fillText(t("survive5"), canvas.width/2, canvas.height/2-100);
-      ctx.fillText(t("guards"), canvas.width/2, canvas.height/2);
-      
-      ctx.font = "20px Arial";
-      ctx.fillStyle = `rgba(255,200,200,${Math.min(1, phaseProgress*1.5)})`;
-      ctx.fillText(t("guards2"), canvas.width/2, canvas.height/2+100);
-    }
-    else if(introPhase >= 4) {
-      // Übergang zum Menu
-      const fadeOut = Math.max(0, 1 - (introTime - 28) / 2);
-      ctx.fillStyle = `rgba(0,0,0,${1 - fadeOut})`;
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-      
-      ctx.font = "40px Arial";
-      ctx.fillStyle = `rgba(200,200,200,${fadeOut})`;
-      ctx.fillText(t("ready"), canvas.width/2, canvas.height/2-50);
-      
-      ctx.font = "24px Arial";
-      ctx.fillStyle = `rgba(150,255,150,${fadeOut*0.7 + 0.3})`;
-      ctx.fillText(t("clickStart"), canvas.width/2, canvas.height/2+80);
-      
-      // Auto-transition zum Menu nach 5 Sekunden
-      if(introTime > 33) {
-        gameState = "menu";
-        introTime = 0;
-      }
-    }
-    
-    introTime += 1/60;
-    ctx.textAlign = "left";
-    return;
-  }
-
-  if(gameState==="menu"){
-    // Besseres Menu
+    // Animated Background Effect
     const t = performance.now()/1000;
-    const gradient = ctx.createLinearGradient(0,0,0,canvas.height);
-    gradient.addColorStop(0,"#0a0e27");
-    gradient.addColorStop(1,"#1a1f3a");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    for(let i = 0; i < 5; i++) {
+      const waveY = canvas.height * 0.3 + Math.sin(t + i)*30;
+      ctx.fillStyle = `rgba(255,100,100,${0.05 - i*0.01})`;
+      ctx.beginPath();
+      ctx.arc(canvas.width/2 + Math.cos(t + i)*100, waveY, 150 + i*50, 0, Math.PI*2);
+      ctx.fill();
+    }
 
-    ctx.fillStyle="white";
-    ctx.font="80px Arial";
+    // Title
+    ctx.fillStyle = "white";
+    ctx.font = "bold 80px Arial";
     ctx.textAlign = "center";
-    const glow = 100 + Math.sin(t*2)*30;
-    ctx.fillStyle = `rgba(255,255,255,${glow/130})`;
-    ctx.fillText(t("shadowbound"), canvas.width/2, canvas.height/2-100);
+    const glow = Math.sin(t*2)*20 + 50;
+    ctx.shadowColor = "rgba(255,100,100,0.5)";
+    ctx.shadowBlur = glow;
+    ctx.fillText("🧛 SHADOWBOUND 🧛", canvas.width/2, 120);
+    ctx.shadowBlur = 0;
     
-    ctx.font="30px Arial";
-    ctx.fillStyle="white";
-    ctx.fillText(t("youAreVampire"), canvas.width/2, canvas.height/2-10);
-    ctx.fillText(t("stayInShadows"), canvas.width/2, canvas.height/2+30);
+    // Subtitle
+    ctx.font = "28px Arial";
+    ctx.fillStyle = "rgba(255,150,150,0.9)";
+    ctx.fillText("Stay in the shadows. Survive the light.", canvas.width/2, 180);
     
-    ctx.font="24px Arial";
-    ctx.fillStyle = `rgba(100,255,100,${0.5+Math.sin(t)*0.3})`;
-    ctx.fillText(t("clickStart"), canvas.width/2, canvas.height/2+100);
+    // Play Button
+    const playY = canvas.height/2 - 50;
+    ctx.fillStyle = "rgba(100,255,100,0.8)";
+    ctx.fillRect(canvas.width/2 - 150, playY, 300, 80);
+    ctx.strokeStyle = "rgba(150,255,150,1)";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(canvas.width/2 - 150, playY, 300, 80);
+    ctx.fillStyle = "white";
+    ctx.font = "bold 40px Arial";
+    ctx.fillText("▶ PLAY", canvas.width/2, playY + 55);
     
-    ctx.font="18px Arial";
-    ctx.fillStyle="rgba(200,200,200,0.8)";
-    ctx.fillText(t("controls"), canvas.width/2, canvas.height/2+150);
+    // Settings Button
+    const settingsY = canvas.height/2 + 60;
+    ctx.fillStyle = "rgba(100,150,255,0.8)";
+    ctx.fillRect(canvas.width/2 - 150, settingsY, 300, 80);
+    ctx.strokeStyle = "rgba(150,200,255,1)";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(canvas.width/2 - 150, settingsY, 300, 80);
+    ctx.fillStyle = "white";
+    ctx.font = "bold 40px Arial";
+    ctx.fillText("⚙ SETTINGS", canvas.width/2, settingsY + 55);
+    
+    // Info Text
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "rgba(200,200,200,0.7)";
+    ctx.textAlign = "center";
+    ctx.fillText("Level 1-5 | Difficulty Scaling | Leaderboard", canvas.width/2, canvas.height - 50);
+    ctx.fillText("Use W/A/S/D to move, SPACE to jump, hide from light!", canvas.width/2, canvas.height - 20);
+    
     ctx.textAlign = "left";
     return;
   }
@@ -1053,17 +1135,6 @@ function draw(){
     ctx.fillStyle="rgba(100,255,100,0.8)";
     ctx.fillText("KLICKE ZUM NEUSTARTEN", canvas.width/2, canvas.height-50);
     ctx.textAlign = "left";
-
-    canvas.onclick = () => {
-      if(gameState==="end"){ 
-        gameState="menu"; 
-        levelIndex=0; 
-        map=levels[0]; 
-        score=0;
-        difficulty=1;
-        resetPlayer();
-      }
-    };
     return;
   }
 
