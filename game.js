@@ -1230,28 +1230,32 @@ function draw(){
 
   // Licht-Maske um die Mitte (stellt Licht um Spieler dar)
   // Wir legen eine halb-Transparente dunkle Ebene darüber und schneiden ein Kreislicht in der Bildschirmmitte aus.
+  // --- Ersetze den "Licht-Maske um die Mitte" Abschnitt in draw() durch diesen Block ---
+  // Licht-Maske um die Mitte (stellt Licht um Spieler dar)
   ctx.save();
+
   // Full dark overlay
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = "rgba(0,0,0,0.6)";
-  ctx.fillRect(0,0,W,H);
+  ctx.fillRect(0, 0, W, H);
 
-  // radial gradient for soft edges (destination-out will cut the overlay)
-  const rad = player.lightRadius;
-  const grad = ctx.createRadialGradient(W/2, H/2, rad * 0.15, W/2, H/2, rad);
-  grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,1)');
+  // radial gradient for soft edges (we WANT an opaque center in the source so destination-out clears center)
+  // Clamp radius so it never exceeds the canvas
+  let rad = Math.min(player.lightRadius, Math.max(W, H) * 1.5);
+  // create radial gradient where center is OPAQUE and outer is TRANSPARENT
+  const grad = ctx.createRadialGradient(W/2, H/2, Math.max(1, rad * 0.1), W/2, H/2, rad);
+  grad.addColorStop(0, 'rgba(0,0,0,1)');   // opaque in center -> destination-out will erase center
+  grad.addColorStop(1, 'rgba(0,0,0,0)');   // transparent at edge
+
+  // Cut the light hole: destination-out makes destination transparent where source is opaque
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.arc(W/2, H/2, rad, 0, Math.PI*2);
   ctx.fill();
-  ctx.restore();
 
-  drawFog();   // Nebel
-  drawUI();    // UI + Minimap
-
-  ctx.restore(); // restore after shake translate
+  // restore to normal drawing mode
+  ctx.restore();// restore after shake translate
 
   requestAnimationFrame(draw);
 }
@@ -1262,3 +1266,4 @@ requestAnimationFrame(draw);
 // PokiSDK.gameLoadingStart()
 // PokiSDK.gameplayStart()
 // PokiSDK.gameplayStop()
+
