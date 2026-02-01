@@ -1,8 +1,30 @@
 // ---- SKALIERUNG + CANVAS ----
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+
+// CSS-Größen (Display / logical pixels)
+let W = innerWidth;
+let H = innerHeight;
+
+// Device Pixel Ratio aware resize
+function resizeCanvas() {
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  // Set CSS size
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  // Set backing store size
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  // Ensure drawing uses CSS pixels by setting transform
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // recompute any UI layout
+  updateMobileButtonPositions();
+}
+addEventListener("resize", resizeCanvas);
+resizeCanvas(); // initial
 
 // ---- POKI SDK (für später) ----
 // window.PokiSDK ? PokiSDK.init() : null;
@@ -141,7 +163,14 @@ const levels = [
 map = levels[levelIndex];
 
 // ---- PLAYER ----
-const player = { x: 2.5*TILE, y: 1.5*TILE, z:0, vz:0, angle:0, speed:2, onGround:true, health:100, speedBoost:0 };
+const player = { x: 2.5*TILE, y: 1.5*TILE, z:0, vz:0, angle:0, speed:2, onGround:true, health:100, speedBoost:0, lightRadius: 220, lightTimer: 0 };
+
+// ---- CAMERA & SCREEN EFFECTS ----
+const camera = { x: player.x, y: player.y, lerp: 0.12, shake: 0, shakeTimer: 0 };
+function applyScreenShake(intensity = 8, duration = 300) {
+  camera.shake = intensity;
+  camera.shakeTimer = duration;
+}
 
 // ---- WÄCHTER/GEGNER ----
 let guards = [];
@@ -243,14 +272,15 @@ let mobileButtons = {
 };
 
 function updateMobileButtonPositions() {
-  mobileButtons.forward = { ...mobileButtons.forward, x: canvas.width/2 - 80, y: canvas.height - 140 };
-  mobileButtons.backward = { ...mobileButtons.backward, x: canvas.width/2 - 80, y: canvas.height - 60 };
-  mobileButtons.left = { ...mobileButtons.left, x: canvas.width/2 - 160, y: canvas.height - 100 };
-  mobileButtons.right = { ...mobileButtons.right, x: canvas.width/2, y: canvas.height - 100 };
-  mobileButtons.jump = { ...mobileButtons.jump, x: canvas.width - 100, y: canvas.height - 140 };
-  mobileButtons.attack = { ...mobileButtons.attack, x: canvas.width - 100, y: canvas.height - 60 };
-  mobileButtons.pause = { ...mobileButtons.pause, x: 20, y: canvas.height - 100 };
+  mobileButtons.forward = { ...mobileButtons.forward, x: W/2 - 80, y: H - 140 };
+  mobileButtons.backward = { ...mobileButtons.backward, x: W/2 - 80, y: H - 60 };
+  mobileButtons.left = { ...mobileButtons.left, x: W/2 - 160, y: H - 100 };
+  mobileButtons.right = { ...mobileButtons.right, x: W/2, y: H - 100 };
+  mobileButtons.jump = { ...mobileButtons.jump, x: W - 100, y: H - 140 };
+  mobileButtons.attack = { ...mobileButtons.attack, x: W - 100, y: H - 60 };
+  mobileButtons.pause = { ...mobileButtons.pause, x: 20, y: H - 100 };
 }
+updateMobileButtonPositions();
 
 canvas.addEventListener("touchstart", e => {
   if(!showMobileControls) return;
@@ -293,7 +323,7 @@ canvas.onclick = (e) => {
     const y = e.clientY - rect.top;
     
     // Play Button
-    if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height/2 - 50 && y < canvas.height/2 + 30) {
+    if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 - 50 && y < H/2 + 30) {
       initAudio();
       gameState="play"; 
       startTime=performance.now(); 
@@ -302,7 +332,7 @@ canvas.onclick = (e) => {
       window.menuStartTime = null;
     }
     // Settings Button
-    else if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height/2 + 60 && y < canvas.height/2 + 140) {
+    else if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 + 60 && y < H/2 + 140) {
       gameState = "settings";
     }
   }
@@ -312,17 +342,17 @@ canvas.onclick = (e) => {
     const y = e.clientY - rect.top;
     
     // Deutsch Language Button
-    if(x > canvas.width/2 - 300 && x < canvas.width/2 - 180 && y > 200 && y < 250) {
+    if(x > W/2 - 300 && x < W/2 - 180 && y > 200 && y < 250) {
       language = "de";
       localStorage.setItem("shadowbound_lang", "de");
     }
     // English Language Button
-    else if(x > canvas.width/2 + 180 && x < canvas.width/2 + 300 && y > 200 && y < 250) {
+    else if(x > W/2 + 180 && x < W/2 + 300 && y > 200 && y < 250) {
       language = "en";
       localStorage.setItem("shadowbound_lang", "en");
     }
     // Back Button
-    else if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height - 100 && y < canvas.height - 40) {
+    else if(x > W/2 - 150 && x < W/2 + 150 && y > H - 100 && y < H - 40) {
       gameState = "menu";
     }
   }
@@ -331,7 +361,7 @@ canvas.onclick = (e) => {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    if(x > canvas.width/2 - 150 && x < canvas.width/2 + 150 && y > canvas.height/2 + 150 && y < canvas.height/2 + 220) {
+    if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 + 150 && y < H/2 + 220) {
       gameState="menu"; 
       levelIndex=0; 
       map=levels[0]; 
@@ -365,6 +395,8 @@ function initLevel(){
   particles = [];
   player.health = 100;
   player.speedBoost = 0;
+  player.lightRadius = 220;
+  player.lightTimer = 0;
   
   // Spawn Wächter basierend auf Schwierigkeit
   const guardCount = 1 + difficulty;
@@ -434,11 +466,10 @@ function castRays(){
       b = 80*depth + Math.random()*15;
     }
 
-    // Screen-Shake Effekt
-    const shake = dead ? Math.random()*5 : 0;
-    const x_pos = i*canvas.width/RAYS + shake;
-    const y_pos = canvas.height/2 - h/2 - player.z;
-    const w = canvas.width/RAYS+1;
+    // Screen-Shake Effekt will be applied globally via ctx.translate in draw()
+    const x_pos = i*W/RAYS;
+    const y_pos = H/2 - h/2 - player.z;
+    const w = W/RAYS+1;
     
     // Zeichne Wand
     ctx.fillStyle = `rgba(${r},${g},${b},0.9)`;
@@ -475,42 +506,42 @@ function castRays(){
   
   // BODEN zeichnen
   ctx.fillStyle = "rgba(40,40,60,0.8)";
-  ctx.fillRect(0, canvas.height/2 + 100, canvas.width, canvas.height/2 - 100);
+  ctx.fillRect(0, H/2 + 100, W, H/2 - 100);
   
   // Boden Pattern
   for(let i = 0; i < RAYS; i++) {
-    const x_pos = i*canvas.width/RAYS;
+    const x_pos = i*W/RAYS;
     const pattern = Math.floor(i/10) % 2;
     if(pattern === 0) {
       ctx.fillStyle = "rgba(50,50,80,0.3)";
-      ctx.fillRect(x_pos, canvas.height/2 + 100, canvas.width/RAYS, canvas.height/2 - 100);
+      ctx.fillRect(x_pos, H/2 + 100, W/RAYS, H/2 - 100);
     }
   }
 }
 
 // ---- FOG ----
 function drawFog(){
-  const fog = ctx.createLinearGradient(0,0,0,canvas.height);
+  const fog = ctx.createLinearGradient(0,0,0,H);
   fog.addColorStop(0,"rgba(0,0,0,0)");
   fog.addColorStop(1,"rgba(0,0,0,0.5)");
   ctx.fillStyle = fog;
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillRect(0,0,W,H);
 }
 
 // ---- SKY + WOLKEN + LIGHTS ----
 function drawSky(){
   const t = performance.now()/2000;
-  const gradient = ctx.createLinearGradient(0,0,0,canvas.height);
+  const gradient = ctx.createLinearGradient(0,0,0,H);
   gradient.addColorStop(0,"#0a0e27"); // dunkelblau oben
   gradient.addColorStop(0.5,"#1a1f3a");
   gradient.addColorStop(1,"#0d0f1f"); // fast schwarz unten
   ctx.fillStyle = gradient;
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillRect(0,0,W,H);
 
   // Sterne
   for(let i=0;i<50;i++){
-    const sx = (i*150 + t*5) % canvas.width;
-    const sy = (i*73) % (canvas.height*0.6);
+    const sx = (i*150 + t*5) % W;
+    const sy = (i*73) % (H*0.6);
     const brightness = 0.3 + Math.sin(t + i)*0.2;
     ctx.fillStyle = `rgba(255,255,255,${brightness})`;
     ctx.fillRect(sx, sy, 2, 2);
@@ -518,7 +549,7 @@ function drawSky(){
 
   // Wolken
   for(let i=0;i<15;i++){
-    const x = ((i*200 + t*50)%(canvas.width+200))-100;
+    const x = ((i*200 + t*50)%(W+200))-100;
     const y = 50 + i*25 + Math.sin(t+i)*15;
     const radius = 40 + Math.sin(t+i)*15;
     ctx.fillStyle = "rgba(255,255,255,0.06)";
@@ -532,17 +563,25 @@ function drawSky(){
     if(p.life > 0){
       ctx.fillStyle = `rgba(${p.color.r},${p.color.g},${p.color.b},${p.life*0.6})`;
       const size = 2 + p.life*3;
-      ctx.fillRect(canvas.width/2 + (p.x-player.x)*10, canvas.height/2 - p.z*10 - size/2, size, size);
+      ctx.fillRect(W/2 + (p.x-player.x)*10, H/2 - p.z*10 - size/2, size, size);
     }
   });
 }
 
 
 // ---- UPDATE ----
-function update(){
+function update(delta){
   if(gameState!=="play" || paused) return;
   if(gameState === "settings") return;
   time = Math.floor((performance.now()-startTime)/1000);
+
+  // Camera smoothing (keeps internal camera x/y near player for potential 2D overlays)
+  camera.x += (player.x - camera.x) * camera.lerp;
+  camera.y += (player.y - camera.y) * camera.lerp;
+  if(camera.shakeTimer > 0) {
+    camera.shakeTimer -= delta;
+    if(camera.shakeTimer < 0) { camera.shakeTimer = 0; camera.shake = 0; }
+  }
 
   let nx=player.x, ny=player.y;
   const realSpeed = player.speed + (player.speedBoost > 0 ? 1 : 0);
@@ -569,11 +608,24 @@ function update(){
   // Power-ups Update
   player.speedBoost = Math.max(0, player.speedBoost - 1);
 
+  // Light powerup duration decay
+  if(player.lightTimer > 0) {
+    player.lightTimer = Math.max(0, player.lightTimer - 1);
+    if(player.lightTimer === 0) {
+      // smooth return to default radius
+      player.lightRadius = Math.max(220, player.lightRadius - 1);
+    }
+  } else {
+    // keep radius near default
+    player.lightRadius += (220 - player.lightRadius) * 0.05;
+  }
+
   // Power-ups Pickup
   powerUps = powerUps.filter(pu => {
     if(Math.hypot(pu.x-player.x, pu.y-player.y) < TILE/2 && player.z === 0){
       if(pu.type === "speed"){ player.speedBoost = 300; }
       else if(pu.type === "health"){ player.health = Math.min(100, player.health+30); }
+      else if(pu.type === "light"){ player.lightRadius = 400; player.lightTimer = 600; }
       playSound(powerUpSound);
       createParticles(pu.x, pu.y, 15, {r:255,g:215,b:0});
       score += 50;
@@ -603,10 +655,16 @@ function update(){
       // Kollusionserkennung
       if(dist < TILE/2 && player.z === 0){
         player.health -= 10;
+        applyScreenShake(8, 300);
         createParticles(player.x, player.y, 10, {r:255,g:0,b:0});
         if(keys["e"]) { // Spieler kann mit E angreifen
           g.health -= 25;
-          if(g.health <= 0) score += 200;
+          if(g.health <= 0) {
+            score += 200;
+            // slow-motion hook (not full-time-scaling, visual moment)
+            // TODO: integrate real time-scaling
+            createParticles(g.x, g.y, 25, {r:255,g:50,b:50});
+          }
         }
       }
     }
@@ -628,6 +686,7 @@ function update(){
   if (tile===0 && player.z===0) { 
     if(time % 1 === 0) { // Jede Sekunde 10 Schaden
       player.health = Math.max(0, player.health - 10);
+      applyScreenShake(6, 150);
       createParticles(player.x, player.y, 5, {r:255,g:200,b:0});
     }
   } 
@@ -651,6 +710,7 @@ function update(){
 function die(){ 
   dead=true; 
   playSound(deathSound);
+  applyScreenShake(14, 800);
   createParticles(player.x, player.y, 20, {r:255,g:50,b:0}); 
 }
 
@@ -716,6 +776,8 @@ function resetPlayer(){
   player.health=100;
   dead=false; 
   startTime=performance.now(); 
+  player.lightRadius = 220;
+  player.lightTimer = 0;
 }
 
 // ---- UI ----
@@ -723,75 +785,75 @@ function drawUI(){
   // Settings Menu
   if(gameState === "settings") {
     ctx.fillStyle = "rgba(0,0,0,0.95)";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,W,H);
     
     // Titel
     ctx.fillStyle = "white";
     ctx.font = "bold 50px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("⚙️ SETTINGS", canvas.width/2, 80);
+    ctx.fillText("⚙️ SETTINGS", W/2, 80);
     
     // Language Section
     ctx.font = "28px Arial";
     ctx.fillStyle = "#FFD700";
-    ctx.fillText("🌐 Language", canvas.width/2, 160);
+    ctx.fillText("🌐 Language", W/2, 160);
     
     ctx.font = "22px Arial";
     ctx.fillStyle = "white";
     
     // Deutsch Button
     ctx.fillStyle = language === "de" ? "rgba(100,200,100,0.8)" : "rgba(100,100,150,0.6)";
-    ctx.fillRect(canvas.width/2 - 300, 200, 120, 50);
+    ctx.fillRect(W/2 - 300, 200, 120, 50);
     ctx.strokeStyle = language === "de" ? "rgba(200,255,200,1)" : "rgba(150,150,200,1)";
     ctx.lineWidth = 3;
-    ctx.strokeRect(canvas.width/2 - 300, 200, 120, 50);
+    ctx.strokeRect(W/2 - 300, 200, 120, 50);
     ctx.fillStyle = "white";
     ctx.font = "20px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("🇩🇪 Deutsch", canvas.width/2 - 240, 230);
+    ctx.fillText("🇩🇪 Deutsch", W/2 - 240, 230);
     
     // English Button
     ctx.fillStyle = language === "en" ? "rgba(100,200,100,0.8)" : "rgba(100,100,150,0.6)";
-    ctx.fillRect(canvas.width/2 + 180, 200, 120, 50);
+    ctx.fillRect(W/2 + 180, 200, 120, 50);
     ctx.strokeStyle = language === "en" ? "rgba(200,255,200,1)" : "rgba(150,150,200,1)";
     ctx.lineWidth = 3;
-    ctx.strokeRect(canvas.width/2 + 180, 200, 120, 50);
+    ctx.strokeRect(W/2 + 180, 200, 120, 50);
     ctx.fillStyle = "white";
-    ctx.fillText("🇬🇧 English", canvas.width/2 + 240, 230);
+    ctx.fillText("🇬🇧 English", W/2 + 240, 230);
     
     // Sound Section
     ctx.font = "28px Arial";
     ctx.fillStyle = "#FFD700";
     ctx.textAlign = "center";
-    ctx.fillText("🔊 Sound", canvas.width/2, 320);
+    ctx.fillText("🔊 Sound", W/2, 320);
     
     ctx.font = "22px Arial";
     ctx.fillStyle = soundEnabled ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
-    ctx.fillText(soundEnabled ? "✓ ON" : "✗ OFF", canvas.width/2, 365);
+    ctx.fillText(soundEnabled ? "✓ ON" : "✗ OFF", W/2, 365);
     
     // Music Section
     ctx.fillStyle = "#FFD700";
     ctx.font = "28px Arial";
-    ctx.fillText("🎵 Music", canvas.width/2, 430);
+    ctx.fillText("🎵 Music", W/2, 430);
     
     ctx.font = "22px Arial";
     ctx.fillStyle = musicEnabled ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
-    ctx.fillText(musicEnabled ? "✓ ON" : "✗ OFF", canvas.width/2, 475);
+    ctx.fillText(musicEnabled ? "✓ ON" : "✗ OFF", W/2, 475);
     
     // Controls Hint
     ctx.font = "18px Arial";
     ctx.fillStyle = "rgba(200,200,200,0.8)";
-    ctx.fillText("M = Sound Toggle | U = Music Toggle | S = Close | Click Language to Change", canvas.width/2, 540);
+    ctx.fillText("M = Sound Toggle | U = Music Toggle | S = Close | Click Language to Change", W/2, 540);
     
     // Back Button
     ctx.fillStyle = "rgba(200,100,100,0.7)";
-    ctx.fillRect(canvas.width/2 - 150, canvas.height - 100, 300, 60);
+    ctx.fillRect(W/2 - 150, H - 100, 300, 60);
     ctx.strokeStyle = "rgba(255,150,150,1)";
     ctx.lineWidth = 3;
-    ctx.strokeRect(canvas.width/2 - 150, canvas.height - 100, 300, 60);
+    ctx.strokeRect(W/2 - 150, H - 100, 300, 60);
     ctx.fillStyle = "white";
     ctx.font = "bold 24px Arial";
-    ctx.fillText("⬅ BACK TO MENU (S)", canvas.width/2, canvas.height - 65);
+    ctx.fillText("⬅ BACK TO MENU (S)", W/2, H - 65);
     
     ctx.textAlign = "left";
     return;
@@ -800,13 +862,13 @@ function drawUI(){
   // Pause Overlay
   if(paused) {
     ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,W,H);
     ctx.fillStyle = "white";
     ctx.font = "60px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("PAUSIERT", canvas.width/2, canvas.height/2-40);
+    ctx.fillText("PAUSIERT", W/2, H/2-40);
     ctx.font = "24px Arial";
-    ctx.fillText("P = Fortsetzen | M = Sound | S = Einstellungen", canvas.width/2, canvas.height/2+40);
+    ctx.fillText("P = Fortsetzen | M = Sound | S = Einstellungen", W/2, H/2+40);
     ctx.textAlign = "left";
     return;
   }
@@ -824,15 +886,15 @@ function drawUI(){
 
   // Health Bar
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(canvas.width-220, 10, 210, 30);
+  ctx.fillRect(W-220, 10, 210, 30);
   ctx.fillStyle = player.health > 50 ? "rgba(0,255,0,0.8)" : player.health > 25 ? "rgba(255,165,0,0.8)" : "rgba(255,0,0,0.8)";
-  ctx.fillRect(canvas.width-210, 15, player.health*2, 20);
+  ctx.fillRect(W-210, 15, player.health*2, 20);
   ctx.strokeStyle = "white";
   ctx.lineWidth = 2;
-  ctx.strokeRect(canvas.width-210, 15, 200, 20);
+  ctx.strokeRect(W-210, 15, 200, 20);
   ctx.fillStyle = "white";
   ctx.font = "bold 14px Arial";
-  ctx.fillText("Health: "+Math.ceil(player.health), canvas.width-180, 32);
+  ctx.fillText("Health: "+Math.ceil(player.health), W-180, 32);
 
   // Schwierigkeitsanzeige
   ctx.fillStyle="white";
@@ -843,7 +905,7 @@ function drawUI(){
   // Speed Boost Anzeige
   if(player.speedBoost > 0){
     ctx.fillStyle = `rgba(0,255,255,${player.speedBoost/300})`;
-    ctx.fillRect(0, canvas.height-10, (player.speedBoost/300)*100, 10);
+    ctx.fillRect(0, H-10, (player.speedBoost/300)*100, 10);
   }
 
   // Minimap
@@ -857,24 +919,24 @@ function drawUI(){
   // Dead Screen
   if(dead){ 
     ctx.fillStyle="rgba(255,0,0,0.7)"; 
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,W,H);
     
     ctx.fillStyle="rgba(255,50,50,1)"; 
     ctx.font="bold 80px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("💀 YOU BURNED ☀️ 💀", canvas.width/2, canvas.height/2-80);
+    ctx.fillText("💀 YOU BURNED ☀️ 💀", W/2, H/2-80);
     
     ctx.fillStyle="white";
     ctx.font="40px Arial"; 
-    ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2+20);
+    ctx.fillText("GAME OVER", W/2, H/2+20);
     
     ctx.fillStyle="rgba(255,255,100,0.9)";
     ctx.font="30px Arial"; 
-    ctx.fillText("Final Score: "+score, canvas.width/2, canvas.height/2+100);
+    ctx.fillText("Final Score: "+score, W/2, H/2+100);
     
     ctx.fillStyle="rgba(100,255,100,0.8)";
     ctx.font="24px Arial"; 
-    ctx.fillText("Press R to Retry Level | CLICK for Menu", canvas.width/2, canvas.height/2+160); 
+    ctx.fillText("Press R to Retry Level | CLICK for Menu", W/2, H/2+160); 
     
     if(keys["r"]) {
       // Nur das Level neu starten - Score und Difficulty bleiben!
@@ -907,7 +969,7 @@ function drawUI(){
 // ---- MINIMAP ----
 function drawMinimap(){
   const mmSize = 120;
-  const mmX = canvas.width - mmSize - 10;
+  const mmX = W - mmSize - 10;
   const mmY = 50;
   const scale = mmSize / (Math.max(map[0].length, map.length) * TILE);
 
@@ -980,7 +1042,25 @@ function drawMobileButtons() {
 }
 
 // ---- DRAW ----
+let lastFrame = performance.now();
 function draw(){
+  const now = performance.now();
+  const delta = now - lastFrame;
+  lastFrame = now;
+
+  // update logic with delta (ms)
+  update(delta);
+
+  // Save and apply screen shake
+  ctx.save();
+  // Random shake while active
+  if(camera.shakeTimer > 0) {
+    const s = camera.shake * (camera.shakeTimer / 400);
+    const sx = (Math.random()-0.5) * s;
+    const sy = (Math.random()-0.5) * s;
+    ctx.translate(sx, sy);
+  }
+
   // Settings Menu Handler
   if(gameState === "settings") {
     if(keys["q"]) mouseSensitivity = Math.max(0.0001, mouseSensitivity - 0.0001);
@@ -991,57 +1071,59 @@ function draw(){
   
   if(gameState === "language") {
     // Sprachauswahl Screen
-    const gradient = ctx.createLinearGradient(0,0,0,canvas.height);
+    const gradient = ctx.createLinearGradient(0,0,0,H);
     gradient.addColorStop(0,"#0a0e27");
     gradient.addColorStop(1,"#1a1f3a");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,W,H);
     
     // Titel
     ctx.fillStyle = "white";
     ctx.font = "60px Arial";
     ctx.textAlign = "center";
-    ctx.fillText(t("selectLang"), canvas.width/2, canvas.height/2 - 100);
+    ctx.fillText(t("selectLang"), W/2, H/2 - 100);
     
     // Deutsch Button
     ctx.fillStyle = "rgba(100,150,255,0.7)";
-    ctx.fillRect(canvas.width/2 - 180, canvas.height/2 - 20, 150, 80);
+    ctx.fillRect(W/2 - 180, H/2 - 20, 150, 80);
     ctx.strokeStyle = "rgba(150,200,255,1)";
     ctx.lineWidth = 3;
-    ctx.strokeRect(canvas.width/2 - 180, canvas.height/2 - 20, 150, 80);
+    ctx.strokeRect(W/2 - 180, H/2 - 20, 150, 80);
     ctx.fillStyle = "white";
     ctx.font = "30px Arial";
-    ctx.fillText("🇩🇪 Deutsch", canvas.width/2 - 105, canvas.height/2 + 35);
+    ctx.fillText("🇩🇪 Deutsch", W/2 - 105, H/2 + 35);
     
     // English Button
     ctx.fillStyle = "rgba(150,100,255,0.7)";
-    ctx.fillRect(canvas.width/2 + 30, canvas.height/2 - 20, 150, 80);
+    ctx.fillRect(W/2 + 30, H/2 - 20, 150, 80);
     ctx.strokeStyle = "rgba(200,150,255,1)";
     ctx.lineWidth = 3;
-    ctx.strokeRect(canvas.width/2 + 30, canvas.height/2 - 20, 150, 80);
+    ctx.strokeRect(W/2 + 30, H/2 - 20, 150, 80);
     ctx.fillStyle = "white";
-    ctx.fillText("🇬🇧 English", canvas.width/2 + 105, canvas.height/2 + 35);
+    ctx.fillText("🇬🇧 English", W/2 + 105, H/2 + 35);
     
     ctx.textAlign = "left";
+    ctx.restore();
+    requestAnimationFrame(draw);
     return;
   }
   
   if(gameState==="menu"){
     // Premium Start Menu
-    const gradient = ctx.createLinearGradient(0,0,0,canvas.height);
+    const gradient = ctx.createLinearGradient(0,0,0,H);
     gradient.addColorStop(0,"#0a0e27");
     gradient.addColorStop(0.5,"#16213e");
     gradient.addColorStop(1,"#0f3460");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,W,H);
     
     // Animated Background Effect
     const t = performance.now()/1000;
     for(let i = 0; i < 5; i++) {
-      const waveY = canvas.height * 0.3 + Math.sin(t + i)*30;
+      const waveY = H * 0.3 + Math.sin(t + i)*30;
       ctx.fillStyle = `rgba(255,100,100,${0.05 - i*0.01})`;
       ctx.beginPath();
-      ctx.arc(canvas.width/2 + Math.cos(t + i)*100, waveY, 150 + i*50, 0, Math.PI*2);
+      ctx.arc(W/2 + Math.cos(t + i)*100, waveY, 150 + i*50, 0, Math.PI*2);
       ctx.fill();
     }
 
@@ -1052,105 +1134,128 @@ function draw(){
     const glow = Math.sin(t*2)*20 + 50;
     ctx.shadowColor = "rgba(255,100,100,0.5)";
     ctx.shadowBlur = glow;
-    ctx.fillText("🧛 SHADOWBOUND 🧛", canvas.width/2, 120);
+    ctx.fillText("🧛 SHADOWBOUND 🧛", W/2, 120);
     ctx.shadowBlur = 0;
     
     // Subtitle
     ctx.font = "28px Arial";
     ctx.fillStyle = "rgba(255,150,150,0.9)";
-    ctx.fillText("Stay in the shadows. Survive the light.", canvas.width/2, 180);
+    ctx.fillText("Stay in the shadows. Survive the light.", W/2, 180);
     
     // Play Button
-    const playY = canvas.height/2 - 50;
+    const playY = H/2 - 50;
     ctx.fillStyle = "rgba(100,255,100,0.8)";
-    ctx.fillRect(canvas.width/2 - 150, playY, 300, 80);
+    ctx.fillRect(W/2 - 150, playY, 300, 80);
     ctx.strokeStyle = "rgba(150,255,150,1)";
     ctx.lineWidth = 4;
-    ctx.strokeRect(canvas.width/2 - 150, playY, 300, 80);
+    ctx.strokeRect(W/2 - 150, playY, 300, 80);
     ctx.fillStyle = "white";
     ctx.font = "bold 40px Arial";
-    ctx.fillText("▶ PLAY", canvas.width/2, playY + 55);
+    ctx.fillText("▶ PLAY", W/2, playY + 55);
     
     // Settings Button
-    const settingsY = canvas.height/2 + 60;
+    const settingsY = H/2 + 60;
     ctx.fillStyle = "rgba(100,150,255,0.8)";
-    ctx.fillRect(canvas.width/2 - 150, settingsY, 300, 80);
+    ctx.fillRect(W/2 - 150, settingsY, 300, 80);
     ctx.strokeStyle = "rgba(150,200,255,1)";
     ctx.lineWidth = 4;
-    ctx.strokeRect(canvas.width/2 - 150, settingsY, 300, 80);
+    ctx.strokeRect(W/2 - 150, settingsY, 300, 80);
     ctx.fillStyle = "white";
     ctx.font = "bold 40px Arial";
-    ctx.fillText("⚙ SETTINGS", canvas.width/2, settingsY + 55);
+    ctx.fillText("⚙ SETTINGS", W/2, settingsY + 55);
     
     // Info Text
     ctx.font = "16px Arial";
     ctx.fillStyle = "rgba(200,200,200,0.7)";
     ctx.textAlign = "center";
-    ctx.fillText("Level 1-5 | Difficulty Scaling | Leaderboard", canvas.width/2, canvas.height - 50);
-    ctx.fillText("Use W/A/S/D to move, SPACE to jump, hide from light!", canvas.width/2, canvas.height - 20);
+    ctx.fillText("Level 1-5 | Difficulty Scaling | Leaderboard", W/2, H - 50);
+    ctx.fillText("Use W/A/S/D to move, SPACE to jump, hide from light!", W/2, H - 20);
     
     ctx.textAlign = "left";
+    ctx.restore();
+    requestAnimationFrame(draw);
     return;
   }
 
   if(gameState==="end"){
     // End Screen
-    const gradient = ctx.createLinearGradient(0,0,0,canvas.height);
+    const gradient = ctx.createLinearGradient(0,0,0,H);
     gradient.addColorStop(0,"#1a0a0a");
     gradient.addColorStop(1,"#2a1a1a");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0,0,W,H);
 
     ctx.fillStyle="white";
     ctx.font="60px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("🏆 SPIEL ABGESCHLOSSEN", canvas.width/2, canvas.height/2-120);
+    ctx.fillText("🏆 SPIEL ABGESCHLOSSEN", W/2, H/2-120);
     ctx.font="40px Arial";
-    ctx.fillText("Final Score: "+score, canvas.width/2, canvas.height/2-20);
-    ctx.fillText("Best Time: "+bestTime+"s", canvas.width/2, canvas.height/2+50);
+    ctx.fillText("Final Score: "+score, W/2, H/2-20);
+    ctx.fillText("Best Time: "+bestTime+"s", W/2, H/2+50);
     
     // Achievements anzeigen
     ctx.font="24px Arial";
-    ctx.fillText("🏅 Achievements:", canvas.width/2, canvas.height/2+120);
-    let achY = canvas.height/2+150;
+    ctx.fillText("🏅 Achievements:", W/2, H/2+120);
+    let achY = H/2+150;
     Object.keys(unlockedAchievements).forEach(key => {
       if(unlockedAchievements[key]) {
         ctx.font="18px Arial";
-        ctx.fillText(achievements[key].name + " - " + achievements[key].desc, canvas.width/2, achY);
+        ctx.fillText(achievements[key].name + " - " + achievements[key].desc, W/2, achY);
         achY += 25;
       }
     });
     
     // Leaderboard
     ctx.font="24px Arial";
-    ctx.fillText("🎯 Top Scores:", 50, canvas.height/2+120);
+    ctx.fillText("🎯 Top Scores:", 50, H/2+120);
     leaderboard.slice(0, 5).forEach((entry, i) => {
       ctx.font="16px Arial";
       ctx.textAlign = "left";
-      ctx.fillText(`${i+1}. ${entry.score} pts (${entry.time}s)`, 50, canvas.height/2+150+i*25);
+      ctx.fillText(`${i+1}. ${entry.score} pts (${entry.time}s)`, 50, H/2+150+i*25);
     });
     
     ctx.textAlign = "center";
     ctx.font="24px Arial";
     ctx.fillStyle="rgba(100,255,100,0.8)";
-    ctx.fillText("KLICKE ZUM NEUSTARTEN", canvas.width/2, canvas.height-50);
+    ctx.fillText("KLICKE ZUM NEUSTARTEN", W/2, H-50);
     ctx.textAlign = "left";
+    ctx.restore();
+    requestAnimationFrame(draw);
     return;
   }
 
+  // Hauptspiel-Rendering
   drawSky();   // Himmel + Wolken
   castRays();  // Wände / Licht / Schatten
+
+  // Licht-Maske um die Mitte (stellt Licht um Spieler dar)
+  // Wir legen eine halb-Transparente dunkle Ebene darüber und schneiden ein Kreislicht in der Bildschirmmitte aus.
+  ctx.save();
+  // Full dark overlay
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0,0,W,H);
+
+  // radial gradient for soft edges (destination-out will cut the overlay)
+  const rad = player.lightRadius;
+  const grad = ctx.createRadialGradient(W/2, H/2, rad * 0.15, W/2, H/2, rad);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,1)');
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(W/2, H/2, rad, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
   drawFog();   // Nebel
   drawUI();    // UI + Minimap
-}
 
-// ---- LOOP ----
-function loop(){ 
-  update(); 
-  draw(); 
-  requestAnimationFrame(loop); 
+  ctx.restore(); // restore after shake translate
+
+  requestAnimationFrame(draw);
 }
-loop();
+requestAnimationFrame(draw);
 
 // ---- POKI INTEGRATION (für später) ----
 // PokiSDK.gameLoadingFinished()
