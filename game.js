@@ -2,29 +2,32 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-// CSS-Größen (Display / logical pixels)
-let W = innerWidth;
-let H = innerHeight;
+// Logical (CSS) size
+let W = window.innerWidth;
+let H = window.innerHeight;
 
-// Device Pixel Ratio aware resize
+// DPR-aware resize
 function resizeCanvas() {
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   W = window.innerWidth;
   H = window.innerHeight;
-  // Set CSS size
+
+  // CSS size
   canvas.style.width = W + "px";
   canvas.style.height = H + "px";
-  // Set backing store size
+
+  // Backing size
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
-  // Ensure drawing uses CSS pixels by setting transform
+
+  // Make drawing coordinates use CSS pixels
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // recompute any UI layout
+  // recompute UI positions that use W/H
   updateMobileButtonPositions();
 }
-addEventListener("resize", resizeCanvas);
-resizeCanvas(); // initial
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
 // ---- POKI SDK (für später) ----
 // window.PokiSDK ? PokiSDK.init() : null;
@@ -33,6 +36,7 @@ resizeCanvas(); // initial
 const TILE = 64;
 const GRAVITY = 0.6;
 const JUMP_FORCE = 12;
+
 // ---- GAME STATE ----
 let gameState = "menu"; // menu | play | end | pause | settings
 let language = localStorage.getItem("shadowbound_lang") || "de"; // de | en
@@ -41,226 +45,130 @@ let map;
 let time = 0;
 let dead = false;
 let startTime = 0;
-let introTime = 0;
 let bestTime = 0;
 let score = 0;
-let health = 100;
 let difficulty = 1; // 1=easy, 2=normal, 3=hard
 let paused = false;
 let soundEnabled = true;
 let musicEnabled = true;
-let mouseSensitivity = 0.002; // Standard Kamera-Sensibilität
+let mouseSensitivity = 0.002;
 let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 let showMobileControls = isMobile || window.innerWidth < 768;
 
 // ---- TRANSLATIONS ----
 const texts = {
-  de: {
-    selectLang: "Wähle deine Sprache",
-    shadowbound: "SHADOWBOUND",
-    storyTitle: "Eine Geschichte der Dunkelheit",
-    wakeUp: "Du erwachst in einer Festung aus Licht...",
-    sunBurns: "Die Sonne brennt überall.",
-    vampireBody: "Dein Vampir-Körper verträgt kein Licht.",
-    shadowsSave: "Nur die Schatten können dich retten.",
-    hideSun: "Verstecke dich vor dem Sonnenlicht.",
-    findSafety: "Finde den Weg zur Sicherheit.",
-    survive5: "Du musst durch 5 Level überleben...",
-    guards: "Hüte dich vor den Wächtern!",
-    guards2: "Sie können dich aus dem Licht aufspüren.",
-    ready: "BEREIT?",
-    clickStart: "KLICKE ZUM STARTEN",
-    youAreVampire: "Du bist ein Vampir 🧛",
-    stayInShadows: "Bleib in den Schatten",
-    controls: "W/A/S/D - Bewegen | SPACE - Springen | E - Angriff | MAUS - Umsehen"
-  },
-  en: {
-    selectLang: "Select your language",
-    shadowbound: "SHADOWBOUND",
-    storyTitle: "A Story of Darkness",
-    wakeUp: "You wake up in a fortress of light...",
-    sunBurns: "The sun burns everywhere.",
-    vampireBody: "Your vampire body cannot handle light.",
-    shadowsSave: "Only shadows can save you.",
-    hideSun: "Hide from the sunlight.",
-    findSafety: "Find the way to safety.",
-    survive5: "You must survive 5 levels...",
-    guards: "Beware of the guardians!",
-    guards2: "They can sense you in the light.",
-    ready: "READY?",
-    clickStart: "CLICK TO START",
-    youAreVampire: "You are a vampire 🧛",
-    stayInShadows: "Stay in the shadows",
-    controls: "W/A/S/D - Move | SPACE - Jump | E - Attack | MOUSE - Look Around"
-  }
+  de: { selectLang: "Wähle deine Sprache", shadowbound: "SHADOWBOUND", ready: "BEREIT?", clickStart: "KLICKE ZUM STARTEN" },
+  en: { selectLang: "Select your language", shadowbound: "SHADOWBOUND", ready: "READY?", clickStart: "CLICK TO START" }
 };
+function t(k){ return texts[language]?.[k] || k; }
 
-function t(key) {
-  return texts[language][key] || key;
-}
-
-// ---- ACHIEVEMENTS ----
+// ---- ACHIEVEMENTS / STORAGE ----
 const achievements = {
-  speedrunner: { name: "🏃 Speedrunner", desc: "Level in < 30s", unlocked: false, score: 100 },
-  survivor: { name: "💪 Survivor", desc: "Mit > 50% Health gewinnen", unlocked: false, score: 150 },
-  guardianSlayer: { name: "⚔️ Guardian Slayer", desc: "3+ Wächter besiegen", unlocked: false, score: 200 },
-  perfectRun: { name: "✨ Perfect Run", desc: "Level ohne Schaden", unlocked: false, score: 300 },
-  allLevels: { name: "👑 Master Vampire", desc: "Alle Level absolvieren", unlocked: false, score: 500 }
+  speedrunner: { name: "🏃 Speedrunner", desc: "Level in < 30s", score: 100 },
+  survivor: { name: "💪 Survivor", desc: "Mit > 50% Health gewinnen", score: 150 },
+  perfectRun: { name: "✨ Perfect Run", desc: "Level ohne Schaden", score: 300 },
+  allLevels: { name: "👑 Master Vampire", desc: "Alle Level absolvieren", score: 500 }
 };
+let unlockedAchievements = JSON.parse(localStorage.getItem("achievements") || "{}");
+let leaderboard = JSON.parse(localStorage.getItem("leaderboard") || "[]");
 
-let unlockedAchievements = JSON.parse(localStorage.getItem("achievements")) || {};
-let leaderboard = JSON.parse(localStorage.getItem("leaderboard")) || [];
-
-// ---- LEVELS (0=licht, 1=schatten, 2=ziel, 3=power-up) ----
+// ---- LEVELS (0=licht,1=schatten,2=ziel) ----
 const levels = [
-  // Level 1 - Easy
-  [
-    [1,1,1,1,0],
-    [0,1,1,1,2],
-    [0,0,1,1,0]
-  ],
-  // Level 2 - Medium
-  [
-    [1,1,1,1,1,2],
-    [0,0,1,1,1,0],
-    [0,0,1,0,0,0]
-  ],
-  // Level 3 - Hard (Labyrinth)
-  [
-    [1,1,1,1,1,1,1,0,0,0],
-    [0,0,1,1,1,1,1,1,1,0],
-    [0,0,1,0,0,0,1,0,0,0],
-    [1,1,1,0,1,1,1,1,1,2],
-    [1,0,0,0,1,0,0,0,1,0]
-  ],
-  // Level 4 - Very Hard (Großes Labyrinth)
-  [
-    [1,1,1,1,1,1,1,1,1,1,1,1,0,0,0],
-    [0,0,1,0,0,0,1,0,0,1,0,0,0,1,0],
-    [0,1,1,1,1,1,1,1,0,1,1,1,1,1,0],
-    [0,1,0,0,0,0,0,1,0,0,0,0,0,1,0],
-    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
-    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
-    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,2]
-  ],
-  // Level 5 - Insane (Chaos Labyrinth - mit sicherem Spawn bei [2,1])
-  [
-    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-    [1,1,1,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0],
-    [1,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,0],
-    [0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,1,0],
-    [0,1,1,1,0,1,1,1,1,1,0,1,1,1,0,1,1,1,1,0],
-    [0,1,0,0,0,1,0,0,0,1,0,1,0,0,0,0,0,1,0,0],
-    [0,1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,0,1,1,1],
-    [0,0,0,0,1,0,0,1,0,0,0,0,1,0,0,0,0,0,0,0],
-    [1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
-    [1,0,0,0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0],
-    [1,1,1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,1,0,2]
-  ]
+  [ [1,1,1,1,0], [0,1,1,1,2], [0,0,1,1,0] ],
+  [ [1,1,1,1,1,2], [0,0,1,1,1,0], [0,0,1,0,0,0] ],
+  [ [1,1,1,1,1,1,1,0,0,0], [0,0,1,1,1,1,1,1,1,0], [0,0,1,0,0,0,1,0,0,0], [1,1,1,0,1,1,1,1,1,2], [1,0,0,0,1,0,0,0,1,0] ]
 ];
 map = levels[levelIndex];
 
 // ---- PLAYER ----
-const player = { x: 2.5*TILE, y: 1.5*TILE, z:0, vz:0, angle:0, speed:2, onGround:true, health:100, speedBoost:0, lightRadius: 220, lightTimer: 0 };
+const player = {
+  x: 2.5 * TILE,
+  y: 1.5 * TILE,
+  z: 0,
+  vz: 0,
+  angle: 0,
+  speed: 2,
+  onGround: true,
+  health: 100,
+  speedBoost: 0,
+  lightRadius: Math.min(W, H) / 3, // initial visible radius
+  lightTimer: 0
+};
 
-// ---- CAMERA & SCREEN EFFECTS ----
+// ---- CAMERA / EFFECTS ----
 const camera = { x: player.x, y: player.y, lerp: 0.12, shake: 0, shakeTimer: 0 };
 function applyScreenShake(intensity = 8, duration = 300) {
-  camera.shake = intensity;
-  camera.shakeTimer = duration;
+  camera.shake = Math.max(camera.shake, intensity);
+  camera.shakeTimer = Math.max(camera.shakeTimer, duration);
 }
 
-// ---- WÄCHTER/GEGNER ----
+// ---- ENTITIES ----
 let guards = [];
-
-// ---- POWER-UPS ----
 let powerUps = [];
-
-// ---- PARTIKEL ----
 let particles = [];
+let lights = [{ x: 3, y: 0, dir: 1 }];
 
-// ---- LIGHTS ----
-let lights = [{ x:3, y:0, dir:1 }];
-
-// ---- SOUNDS (mit Fehlerbehandlung) ----
+// ---- AUDIO (simple) ----
 const stepSound = new Audio("assets/sounds/step.mp3");
 const deathSound = new Audio("assets/sounds/death.mp3");
 const goalSound = new Audio("assets/sounds/goal.mp3");
 const hitSound = new Audio("assets/sounds/hit.mp3");
 const powerUpSound = new Audio("assets/sounds/powerup.mp3");
+function playSound(sound){ if(soundEnabled) try{ sound.currentTime = 0; sound.play().catch(()=>{}); }catch(e){} }
 
-function playSound(sound) {
-  if(soundEnabled) try { sound.play().catch(e => {}); } catch(e) {}
-}
-
-// ---- BACKGROUND MUSIC SYSTEM ----
-let audioContext;
-let oscillator;
-let gainNode;
-
-function initAudio() {
-  if(!audioContext) {
+let audioContext, gainNode, oscillator;
+function initAudio(){
+  if(!audioContext){
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     gainNode = audioContext.createGain();
     gainNode.connect(audioContext.destination);
-    gainNode.gain.value = 0.1;
+    gainNode.gain.value = 0.06;
   }
 }
-
-function playBackgroundMusic() {
-  if(!musicEnabled || !audioContext) return;
+function playBackgroundMusic(){
+  if(!musicEnabled) return;
+  initAudio();
   try {
     if(oscillator) oscillator.stop();
     oscillator = audioContext.createOscillator();
     oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(50, audioContext.currentTime);
-    oscillator.frequency.linearRampToValueAtTime(60, audioContext.currentTime + 2);
+    oscillator.frequency.setValueAtTime(48, audioContext.currentTime);
     oscillator.connect(gainNode);
-    oscillator.start(audioContext.currentTime);
-  } catch(e) {}
+    oscillator.start();
+  } catch(e){}
 }
-
-function stopBackgroundMusic() {
-  if(oscillator) try { oscillator.stop(); } catch(e) {}
-}
+function stopBackgroundMusic(){ if(oscillator) try{ oscillator.stop(); }catch(e){} }
 
 // ---- INPUT ----
 const keys = {};
-addEventListener("keydown", e => {
-  if(gameState === "play") keys[e.key.toLowerCase()] = true;
-  if(e.key.toLowerCase() === "p") paused = gameState === "play" ? !paused : false;
-  if(e.key.toLowerCase() === "m") { soundEnabled = !soundEnabled; }
-  if(e.key.toLowerCase() === "s" && gameState === "play") gameState = "settings";
-  if(e.key.toLowerCase() === "s" && gameState === "settings") gameState = "play";
+window.addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  if(gameState === "play") keys[k] = true;
+  if(k === "p") paused = gameState === "play" ? !paused : false;
+  if(k === "m") soundEnabled = !soundEnabled;
+  if(k === "u") musicEnabled = !musicEnabled;
+  if(k === "s"){
+    if(gameState === "play") gameState = "settings";
+    else if(gameState === "settings") gameState = "play";
+  }
 });
-addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
 
-// ---- TOUCH CONTROLS ----
-let touchStart = { x: 0, y: 0 };
-let touchCurrent = { x: 0, y: 0 };
+// ---- TOUCH / MOBILE ----
+let touchStart = { x: 0, y: 0 }, touchCurrent = { x: 0, y: 0 };
 const touchDeadzone = 50;
-
-canvas.addEventListener("touchstart", e => {
-  touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-}, false);
-
+canvas.addEventListener("touchstart", e => { touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }, { passive: false });
 canvas.addEventListener("touchmove", e => {
   e.preventDefault();
   touchCurrent = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  if(document.pointerLockElement !== canvas) {
-    const dx = touchCurrent.x - touchStart.x;
-    const dy = touchCurrent.y - touchStart.y;
-    // Rotate view
-    if(Math.abs(dx) > touchDeadzone) {
-      player.angle += dx * 0.01;
-      touchStart.x = touchCurrent.x;
-    }
+  const dx = touchCurrent.x - touchStart.x;
+  if(Math.abs(dx) > touchDeadzone) {
+    player.angle += dx * 0.01;
+    touchStart.x = touchCurrent.x;
   }
-}, false);
+}, { passive: false });
 
-// ---- MOBILE BUTTONS ----
+// Mobile buttons
 let mobileButtons = {
   forward: { x: 0, y: 0, w: 60, h: 60, pressed: false, label: "↑" },
   backward: { x: 0, y: 0, w: 60, h: 60, pressed: false, label: "↓" },
@@ -270,230 +178,116 @@ let mobileButtons = {
   attack: { x: 0, y: 0, w: 60, h: 60, pressed: false, label: "⚔" },
   pause: { x: 0, y: 0, w: 60, h: 60, pressed: false, label: "⏸" }
 };
-
-function updateMobileButtonPositions() {
-  mobileButtons.forward = { ...mobileButtons.forward, x: W/2 - 80, y: H - 140 };
-  mobileButtons.backward = { ...mobileButtons.backward, x: W/2 - 80, y: H - 60 };
-  mobileButtons.left = { ...mobileButtons.left, x: W/2 - 160, y: H - 100 };
-  mobileButtons.right = { ...mobileButtons.right, x: W/2, y: H - 100 };
-  mobileButtons.jump = { ...mobileButtons.jump, x: W - 100, y: H - 140 };
-  mobileButtons.attack = { ...mobileButtons.attack, x: W - 100, y: H - 60 };
-  mobileButtons.pause = { ...mobileButtons.pause, x: 20, y: H - 100 };
+function updateMobileButtonPositions(){
+  mobileButtons.forward.x = Math.round(W/2 - 80); mobileButtons.forward.y = Math.round(H - 140);
+  mobileButtons.backward.x = Math.round(W/2 - 80); mobileButtons.backward.y = Math.round(H - 60);
+  mobileButtons.left.x = Math.round(W/2 - 160); mobileButtons.left.y = Math.round(H - 100);
+  mobileButtons.right.x = Math.round(W/2); mobileButtons.right.y = Math.round(H - 100);
+  mobileButtons.jump.x = Math.round(W - 100); mobileButtons.jump.y = Math.round(H - 140);
+  mobileButtons.attack.x = Math.round(W - 100); mobileButtons.attack.y = Math.round(H - 60);
+  mobileButtons.pause.x = 20; mobileButtons.pause.y = Math.round(H - 100);
 }
 updateMobileButtonPositions();
 
 canvas.addEventListener("touchstart", e => {
   if(!showMobileControls) return;
-  const touch = e.touches[0];
-  const x = touch.clientX;
-  const y = touch.clientY;
-  
-  Object.keys(mobileButtons).forEach(btn => {
-    const b = mobileButtons[btn];
-    if(x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) {
-      b.pressed = true;
-      if(btn === "pause") paused = gameState === "play" ? !paused : false;
-      if(btn === "forward") keys["w"] = true;
-      if(btn === "backward") keys["s"] = true;
-      if(btn === "left") keys["a"] = true;
-      if(btn === "right") keys["d"] = true;
-      if(btn === "jump") keys[" "] = true;
-      if(btn === "attack") keys["e"] = true;
+  for(const t of e.touches){
+    const x = t.clientX, y = t.clientY;
+    for(const key in mobileButtons){
+      const b = mobileButtons[key];
+      if(x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h){
+        b.pressed = true;
+        if(key === "pause") paused = gameState === "play" ? !paused : false;
+        if(key === "forward") keys["w"] = true;
+        if(key === "backward") keys["s"] = true;
+        if(key === "left") keys["a"] = true;
+        if(key === "right") keys["d"] = true;
+        if(key === "jump") keys[" "] = true;
+        if(key === "attack") keys["e"] = true;
+      }
     }
-  });
-}, false);
-
+  }
+}, { passive: false });
 canvas.addEventListener("touchend", e => {
   if(!showMobileControls) return;
-  Object.keys(mobileButtons).forEach(btn => {
-    mobileButtons[btn].pressed = false;
-  });
-  keys["w"] = false;
-  keys["s"] = false;
-  keys["a"] = false;
-  keys["d"] = false;
-  keys[" "] = false;
-  keys["e"] = false;
-}, false);
+  for(const k in mobileButtons) mobileButtons[k].pressed = false;
+  ["w","s","a","d"," ","e"].forEach(k => keys[k] = false);
+}, { passive: false });
 
-canvas.onclick = (e) => {
-  if(gameState==="menu"){ 
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Play Button
-    if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 - 50 && y < H/2 + 30) {
-      initAudio();
-      gameState="play"; 
-      startTime=performance.now(); 
-      initLevel(); 
-      playBackgroundMusic();
-      window.menuStartTime = null;
-    }
-    // Settings Button
-    else if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 + 60 && y < H/2 + 140) {
-      gameState = "settings";
-    }
-  }
-  else if(gameState === "settings") {
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Deutsch Language Button
-    if(x > W/2 - 300 && x < W/2 - 180 && y > 200 && y < 250) {
-      language = "de";
-      localStorage.setItem("shadowbound_lang", "de");
-    }
-    // English Language Button
-    else if(x > W/2 + 180 && x < W/2 + 300 && y > 200 && y < 250) {
-      language = "en";
-      localStorage.setItem("shadowbound_lang", "en");
-    }
-    // Back Button
-    else if(x > W/2 - 150 && x < W/2 + 150 && y > H - 100 && y < H - 40) {
-      gameState = "menu";
-    }
-  }
-  else if(gameState==="end"){ 
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 + 150 && y < H/2 + 220) {
-      gameState="menu"; 
-      levelIndex=0; 
-      map=levels[0]; 
-      score=0;
-      difficulty=1;
-      resetPlayer();
-      window.menuStartTime = null;
-    }
-  }
-  else if(dead) {
-    // Klick auf Game Over Screen: zurück zum Menu
-    gameState = "menu";
-    levelIndex = 0;
-    map = levels[0];
-    score = 0;
-    difficulty = 1;
-    dead = false;
-    resetPlayer();
-    window.menuStartTime = null;
-  }
-  canvas.requestPointerLock();
-};
-addEventListener("mousemove", e => {
-  if(document.pointerLockElement===canvas) player.angle += e.movementX*mouseSensitivity;
-});
+// Mouse look
+canvas.addEventListener("click", () => { canvas.requestPointerLock?.(); });
+window.addEventListener("mousemove", e => { if(document.pointerLockElement === canvas) player.angle += e.movementX * mouseSensitivity; });
 
-// ---- INIT LEVEL ----
+// ---- INIT LEVEL / ENTITIES ----
 function initLevel(){
-  guards = [];
-  powerUps = [];
-  particles = [];
-  player.health = 100;
-  player.speedBoost = 0;
-  player.lightRadius = 220;
-  player.lightTimer = 0;
-  
-  // Spawn Wächter basierend auf Schwierigkeit
+  guards = []; powerUps = []; particles = [];
+  player.health = 100; player.speedBoost = 0; player.lightRadius = Math.min(W, H) / 3; player.lightTimer = 0;
   const guardCount = 1 + difficulty;
-  for(let i=0; i<guardCount; i++){
-    guards.push({
-      x: Math.random()*map[0].length*TILE,
-      y: Math.random()*map.length*TILE,
-      health: 50,
-      speed: 0.5 + difficulty*0.3,
-      angle: Math.random()*Math.PI*2,
-      range: 3
-    });
+  for(let i=0;i<guardCount;i++){
+    guards.push({ x: Math.random() * map[0].length * TILE, y: Math.random() * map.length * TILE, health: 50, speed: 0.5 + difficulty * 0.3, angle: Math.random() * Math.PI * 2, range: 3 });
   }
 }
-
-// ---- PARTIKEL SYSTEM ----
-function createParticles(x, y, count, color){
-  for(let i=0; i<count; i++){
-    particles.push({
-      x: x, y: y, z: 0,
-      vx: (Math.random()-0.5)*4,
-      vy: (Math.random()-0.5)*4,
-      vz: Math.random()*3,
-      life: 1,
-      color: color
-    });
-  }
+function resetPlayer(){
+  player.x = 2.5 * TILE; player.y = 1.5 * TILE; player.z = 0; player.vz = 0; player.health = 100;
+  dead = false; startTime = performance.now(); player.lightRadius = Math.min(W, H) / 3; player.lightTimer = 0;
 }
 
+// ---- PARTICLES ----
+function createParticles(x,y,count,color){
+  for(let i=0;i<count;i++){
+    particles.push({ x, y, z:0, vx:(Math.random()-0.5)*4, vy:(Math.random()-0.5)*4, vz:Math.random()*3, life:1, color });
+  }
+}
 function updateParticles(){
-  particles = particles.filter(p => p.life > 0);
-  particles.forEach(p => {
-    p.x += p.vx;
-    p.y += p.vy;
-    p.z += p.vz;
-    p.vz -= 0.2;
-    p.life -= 0.02;
-  });
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.z += p.vz; p.vz -= 0.2; p.life -= 0.02;
+    if(p.life <= 0) particles.splice(i,1);
+  }
 }
+
+// ---- RAYCAST / WORLD RENDER ----
 const FOV = Math.PI/3;
 const RAYS = 260;
-
 function castRays(){
   for(let i=0;i<RAYS;i++){
-    const a = player.angle - FOV/2 + (i/RAYS)*FOV;
-    let d=0; let hitTile=1;
-    while(d<900){
-      d+=5;
-      const x = player.x + Math.cos(a)*d;
-      const y = player.y + Math.sin(a)*d;
-      const mx = Math.floor(x/TILE);
-      const my = Math.floor(y/TILE);
-      if(map[my] && map[my][mx]!==1){ hitTile=map[my][mx]; break; }
+    const a = player.angle - FOV/2 + (i / RAYS) * FOV;
+    let d = 0, hitTile = 1;
+    while(d < 900){
+      d += 5;
+      const x = player.x + Math.cos(a) * d;
+      const y = player.y + Math.sin(a) * d;
+      const mx = Math.floor(x / TILE);
+      const my = Math.floor(y / TILE);
+      if(map[my] && map[my][mx] !== 1){ hitTile = map[my][mx]; break; }
     }
-    const h = 50000/d; // Erhöhte Wandhöhe
-    const depth = Math.max(0,1-d/700);
+    const h = 50000 / Math.max(1, d);
+    const depth = Math.max(0, 1 - d / 700);
 
     let r,g,b;
-    if(hitTile===2){ r=255; g=100; b=0; } // Ziel orange
-    else if(hitTile===0){ // Licht mit Lichtstrahlen-Effekt
-      r = 240*depth + Math.random()*15;
-      g = 200*depth + Math.random()*15;
-      b = 150*depth + Math.random()*15;
-    } else { // Schatten
-      r = 20*depth + Math.random()*10;
-      g = 30*depth + Math.random()*10;
-      b = 80*depth + Math.random()*15;
-    }
+    if(hitTile === 2){ r = 255; g = 100; b = 0; }
+    else if(hitTile === 0){ r = 240 * depth + Math.random() * 15; g = 200 * depth + Math.random() * 15; b = 150 * depth + Math.random() * 15; }
+    else { r = 20 * depth + Math.random() * 10; g = 30 * depth + Math.random() * 10; b = 80 * depth + Math.random() * 15; }
 
-    // Screen-Shake Effekt will be applied globally via ctx.translate in draw()
-    const x_pos = i*W/RAYS;
+    const x_pos = i * W / RAYS;
     const y_pos = H/2 - h/2 - player.z;
-    const w = W/RAYS+1;
-    
-    // Zeichne Wand
-    ctx.fillStyle = `rgba(${r},${g},${b},0.9)`;
+    const w = W / RAYS + 1;
+    ctx.fillStyle = `rgba(${r},${g},${b},0.95)`;
     ctx.fillRect(x_pos, y_pos, w, h);
-    
-    // Lichtstrahlen-Effekt auf Lichtwänden (von oben nach unten)
-    if(hitTile === 0 && depth > 0.3) {
-      const stripeCount = Math.floor(h/4); // Mehr Streifen für flüssigere Animation
-      const waveSpeed = time * 0.15; // Schnellere Wellen-Animation
-      
-      for(let j = 0; j < stripeCount; j++) {
-        const stripe_y = y_pos + j*4;
-        // Mehrschichtige Wellen für flüssige Bewegung
+
+    if(hitTile === 0 && depth > 0.3){
+      const stripeCount = Math.floor(h / 4);
+      const waveSpeed = time * 0.15;
+      for(let j=0;j<stripeCount;j++){
+        const stripe_y = y_pos + j * 4;
         const brightness1 = Math.sin(waveSpeed + j*0.3) * 0.25 + 0.15;
         const brightness2 = Math.sin(waveSpeed*0.7 + j*0.5) * 0.2 + 0.1;
         const combined = brightness1 + brightness2;
-        
-        ctx.fillStyle = `rgba(255,220,100,${combined*depth*0.35})`;
+        ctx.fillStyle = `rgba(255,220,100,${combined * depth * 0.35})`;
         ctx.fillRect(x_pos, stripe_y, w, 1);
-        ctx.fillStyle = `rgba(255,240,150,${combined*depth*0.25})`;
+        ctx.fillStyle = `rgba(255,240,150,${combined * depth * 0.25})`;
         ctx.fillRect(x_pos + w*0.25, stripe_y + 1, w*0.5, 1);
       }
-      
-      // Vertikale Lichtstreifen mit sanfter Animation
       const rayBrightness = Math.sin(waveSpeed*0.5) * 0.1 + 0.15;
       ctx.strokeStyle = `rgba(255,230,150,${rayBrightness*depth})`;
       ctx.lineWidth = 2;
@@ -503,767 +297,342 @@ function castRays(){
       ctx.stroke();
     }
   }
-  
-  // BODEN zeichnen
+
+  // Ground
   ctx.fillStyle = "rgba(40,40,60,0.8)";
   ctx.fillRect(0, H/2 + 100, W, H/2 - 100);
-  
-  // Boden Pattern
-  for(let i = 0; i < RAYS; i++) {
-    const x_pos = i*W/RAYS;
-    const pattern = Math.floor(i/10) % 2;
-    if(pattern === 0) {
+  for(let i=0;i<RAYS;i++){
+    const x_pos = i * W / RAYS;
+    if((Math.floor(i / 10) % 2) === 0){
       ctx.fillStyle = "rgba(50,50,80,0.3)";
-      ctx.fillRect(x_pos, H/2 + 100, W/RAYS, H/2 - 100);
+      ctx.fillRect(x_pos, H/2 + 100, W / RAYS, H/2 - 100);
     }
   }
 }
 
-// ---- FOG ----
+// ---- FOG / SKY / PARTICLES ----
 function drawFog(){
   const fog = ctx.createLinearGradient(0,0,0,H);
-  fog.addColorStop(0,"rgba(0,0,0,0)");
-  fog.addColorStop(1,"rgba(0,0,0,0.5)");
+  fog.addColorStop(0, "rgba(0,0,0,0)");
+  fog.addColorStop(1, "rgba(0,0,0,0.5)");
   ctx.fillStyle = fog;
   ctx.fillRect(0,0,W,H);
 }
 
-// ---- SKY + WOLKEN + LIGHTS ----
 function drawSky(){
-  const t = performance.now()/2000;
+  const t = performance.now() / 2000;
   const gradient = ctx.createLinearGradient(0,0,0,H);
-  gradient.addColorStop(0,"#0a0e27"); // dunkelblau oben
-  gradient.addColorStop(0.5,"#1a1f3a");
-  gradient.addColorStop(1,"#0d0f1f"); // fast schwarz unten
+  gradient.addColorStop(0, "#0a0e27");
+  gradient.addColorStop(0.5, "#1a1f3a");
+  gradient.addColorStop(1, "#0d0f1f");
   ctx.fillStyle = gradient;
   ctx.fillRect(0,0,W,H);
 
-  // Sterne
-  for(let i=0;i<50;i++){
+  for(let i=0;i<40;i++){
     const sx = (i*150 + t*5) % W;
     const sy = (i*73) % (H*0.6);
-    const brightness = 0.3 + Math.sin(t + i)*0.2;
+    const brightness = 0.2 + Math.sin(t + i) * 0.2;
     ctx.fillStyle = `rgba(255,255,255,${brightness})`;
     ctx.fillRect(sx, sy, 2, 2);
   }
 
-  // Wolken
-  for(let i=0;i<15;i++){
-    const x = ((i*200 + t*50)%(W+200))-100;
-    const y = 50 + i*25 + Math.sin(t+i)*15;
-    const radius = 40 + Math.sin(t+i)*15;
+  for(let i=0;i<12;i++){
+    const x = ((i*200 + t*50) % (W + 200)) - 100;
+    const y = 50 + i*25 + Math.sin(t + i) * 15;
+    const radius = 40 + Math.sin(t + i) * 15;
     ctx.fillStyle = "rgba(255,255,255,0.06)";
     ctx.beginPath();
-    ctx.arc(x,y,radius,0,Math.PI*2);
+    ctx.arc(x, y, radius, 0, Math.PI*2);
     ctx.fill();
   }
 
-  // Partikel zeichnen
   particles.forEach(p => {
     if(p.life > 0){
       ctx.fillStyle = `rgba(${p.color.r},${p.color.g},${p.color.b},${p.life*0.6})`;
-      const size = 2 + p.life*3;
-      ctx.fillRect(W/2 + (p.x-player.x)*10, H/2 - p.z*10 - size/2, size, size);
+      const size = 2 + p.life * 3;
+      ctx.fillRect(W/2 + (p.x - player.x) * 10, H/2 - p.z * 10 - size/2, size, size);
     }
   });
 }
 
-
-// ---- UPDATE ----
+// ---- UPDATE (delta-ms) ----
+let lastTime = performance.now();
 function update(delta){
-  if(gameState!=="play" || paused) return;
-  if(gameState === "settings") return;
-  time = Math.floor((performance.now()-startTime)/1000);
+  if(gameState !== "play" || paused) return;
+  time = Math.floor((performance.now() - startTime) / 1000);
 
-  // Camera smoothing (keeps internal camera x/y near player for potential 2D overlays)
+  // camera smoothing
   camera.x += (player.x - camera.x) * camera.lerp;
   camera.y += (player.y - camera.y) * camera.lerp;
-  if(camera.shakeTimer > 0) {
+  if(camera.shakeTimer > 0){
     camera.shakeTimer -= delta;
-    if(camera.shakeTimer < 0) { camera.shakeTimer = 0; camera.shake = 0; }
+    if(camera.shakeTimer <= 0){ camera.shakeTimer = 0; camera.shake = 0; }
   }
 
-  let nx=player.x, ny=player.y;
+  let nx = player.x, ny = player.y;
   const realSpeed = player.speed + (player.speedBoost > 0 ? 1 : 0);
-  
-  if((keys["w"]||keys["s"]||keys["a"]||keys["d"]) && player.onGround && !dead){ if(time%2===0) playSound(stepSound); }
 
-  // Forward/Backward
-  if(keys["w"]){ nx += Math.cos(player.angle)*realSpeed; ny += Math.sin(player.angle)*realSpeed; }
-  if(keys["s"]){ nx -= Math.cos(player.angle)*realSpeed; ny -= Math.sin(player.angle)*realSpeed; }
+  if((keys["w"]||keys["s"]||keys["a"]||keys["d"]) && player.onGround && !dead){
+    if(time % 2 === 0) playSound(stepSound);
+  }
+  if(keys["w"]){ nx += Math.cos(player.angle) * realSpeed; ny += Math.sin(player.angle) * realSpeed; }
+  if(keys["s"]){ nx -= Math.cos(player.angle) * realSpeed; ny -= Math.sin(player.angle) * realSpeed; }
+  if(keys["a"]){ nx += Math.cos(player.angle - Math.PI/2) * realSpeed; ny += Math.sin(player.angle - Math.PI/2) * realSpeed; }
+  if(keys["d"]){ nx += Math.cos(player.angle + Math.PI/2) * realSpeed; ny += Math.sin(player.angle + Math.PI/2) * realSpeed; }
 
-  // Strafe Left/Right
-  if(keys["a"]){ nx += Math.cos(player.angle - Math.PI/2)*realSpeed; ny += Math.sin(player.angle - Math.PI/2)*realSpeed; }
-  if(keys["d"]){ nx += Math.cos(player.angle + Math.PI/2)*realSpeed; ny += Math.sin(player.angle + Math.PI/2)*realSpeed; }
+  const tx = Math.floor(nx / TILE), ty = Math.floor(ny / TILE);
+  if(map[ty] && map[ty][tx] !== 0){ player.x = nx; player.y = ny; }
 
-  const tx=Math.floor(nx/TILE);
-  const ty=Math.floor(ny/TILE);
-  if(map[ty] && map[ty][tx]!==0){ player.x=nx; player.y=ny; }
-
-  if(keys[" "] && player.onGround){ player.vz=JUMP_FORCE; player.onGround=false; }
+  if(keys[" "] && player.onGround){ player.vz = JUMP_FORCE; player.onGround = false; }
   player.vz -= GRAVITY;
   player.z += player.vz;
-  if(player.z<=0){ player.z=0; player.vz=0; player.onGround=true; }
+  if(player.z <= 0){ player.z = 0; player.vz = 0; player.onGround = true; }
 
-  // Power-ups Update
+  // powerups / light timer / speed decay
   player.speedBoost = Math.max(0, player.speedBoost - 1);
+  if(player.lightTimer > 0){ player.lightTimer = Math.max(0, player.lightTimer - 1); }
+  else { player.lightRadius += (Math.min(W,H)/3 - player.lightRadius) * 0.05; }
 
-  // Light powerup duration decay
-  if(player.lightTimer > 0) {
-    player.lightTimer = Math.max(0, player.lightTimer - 1);
-    if(player.lightTimer === 0) {
-      // smooth return to default radius
-      player.lightRadius = Math.max(220, player.lightRadius - 1);
+  // pickups
+  for(let i = powerUps.length - 1; i >= 0; i--){
+    const pu = powerUps[i];
+    if(Math.hypot(pu.x - player.x, pu.y - player.y) < TILE / 2 && player.z === 0){
+      if(pu.type === "speed"){ player.speedBoost = 300; }
+      else if(pu.type === "health"){ player.health = Math.min(100, player.health + 30); }
+      else if(pu.type === "light"){ player.lightRadius = Math.min(Math.max(player.lightRadius, 400), Math.max(W,H)); player.lightTimer = 600; }
+      playSound(powerUpSound);
+      createParticles(pu.x, pu.y, 15, { r:255, g:215, b:0 });
+      score += 50;
+      powerUps.splice(i, 1);
     }
-  } else {
-    // keep radius near default
-    player.lightRadius += (220 - player.lightRadius) * 0.05;
   }
 
-  // Power-ups Pickup
-  powerUps = powerUps.filter(pu => {
-    if(Math.hypot(pu.x-player.x, pu.y-player.y) < TILE/2 && player.z === 0){
-      if(pu.type === "speed"){ player.speedBoost = 300; }
-      else if(pu.type === "health"){ player.health = Math.min(100, player.health+30); }
-      else if(pu.type === "light"){ player.lightRadius = 400; player.lightTimer = 600; }
-      playSound(powerUpSound);
-      createParticles(pu.x, pu.y, 15, {r:255,g:215,b:0});
-      score += 50;
-      return false;
+  // guards
+  for(const g of guards){
+    const dx = player.x - g.x, dy = player.y - g.y, dist = Math.hypot(dx, dy);
+    const playerTile = map[Math.floor(player.y/TILE)]?.[Math.floor(player.x/TILE)];
+    if(dist < g.range * TILE && playerTile === 0){
+      g.angle = Math.atan2(dy, dx);
+      g.x += Math.cos(g.angle) * g.speed;
+      g.y += Math.sin(g.angle) * g.speed;
     }
-    return true;
-  });
-
-  // Wächter Update
-  guards.forEach(g => {
-    const dx = player.x - g.x;
-    const dy = player.y - g.y;
-    const dist = Math.hypot(dx, dy);
-    
-    if(dist < g.range*TILE){
-      const tx = Math.floor(g.x/TILE);
-      const ty = Math.floor(g.y/TILE);
-      const playerTile = map[Math.floor(player.y/TILE)]?.[Math.floor(player.x/TILE)];
-      
-      // Wächter verfolgt wenn Spieler im Licht
-      if(playerTile === 0){
-        g.angle = Math.atan2(dy, dx);
-        g.x += Math.cos(g.angle) * g.speed;
-        g.y += Math.sin(g.angle) * g.speed;
-      }
-
-      // Kollusionserkennung
-      if(dist < TILE/2 && player.z === 0){
-        player.health -= 10;
-        applyScreenShake(8, 300);
-        createParticles(player.x, player.y, 10, {r:255,g:0,b:0});
-        if(keys["e"]) { // Spieler kann mit E angreifen
-          g.health -= 25;
-          if(g.health <= 0) {
-            score += 200;
-            // slow-motion hook (not full-time-scaling, visual moment)
-            // TODO: integrate real time-scaling
-            createParticles(g.x, g.y, 25, {r:255,g:50,b:50});
-          }
-        }
-      }
+    if(dist < TILE/2 && player.z === 0){
+      player.health = Math.max(0, player.health - 10);
+      applyScreenShake(8, 300);
+      createParticles(player.x, player.y, 8, { r:255, g:0, b:0 });
+      if(keys["e"]){ g.health -= 25; if(g.health <= 0){ score += 200; createParticles(g.x, g.y, 25, { r:255, g:50, b:50 }); } }
     }
-  });
+  }
   guards = guards.filter(g => g.health > 0);
 
-  // moving lights
-  lights.forEach(l => {
-    l.x += l.dir*0.01;
-    if (l.x>4.2 || l.x<1.2) l.dir*=-1;
-  });
+  // lights motion
+  for(const l of lights){ l.x += l.dir * 0.01; if(l.x > 4.2 || l.x < 1.2) l.dir *= -1; }
 
   updateParticles();
 
-  // TILE CHECK
+  // tile effect (light damage / shadow heal)
   const tile = map[ty]?.[tx];
-  
-  // Licht-Schaden: Schneller Schaden wenn im Licht
-  if (tile===0 && player.z===0) { 
-    if(time % 1 === 0) { // Jede Sekunde 10 Schaden
-      player.health = Math.max(0, player.health - 10);
-      applyScreenShake(6, 150);
-      createParticles(player.x, player.y, 5, {r:255,g:200,b:0});
-    }
-  } 
-  // Schatten-Heilung
-  else if(tile===1 && player.z===0) {
-    // Im Schatten - langsam regenerieren (alle 2 Sekunden +3 Health)
-    if(time % 2 === 0 && player.health < 100) {
-      player.health = Math.min(100, player.health + 3);
-    }
+  if(tile === 0 && player.z === 0){
+    // damage per second: we use time floor, avoid spamming every frame
+    if(time % 1 === 0){ player.health = Math.max(0, player.health - 10); applyScreenShake(6, 150); createParticles(player.x, player.y, 5, { r:255, g:200, b:0 }); }
+  } else if(tile === 1 && player.z === 0){
+    if(time % 2 === 0 && player.health < 100) player.health = Math.min(100, player.health + 3);
   }
-  
-  if(player.health <= 0) {
-    die();
-  }
-  if (tile===2) {
-    nextLevel();
-  }
+
+  if(player.health <= 0) die();
+  if(tile === 2) nextLevel();
 }
 
-// ---- DIE & LEVEL ----
-function die(){ 
-  dead=true; 
+// ---- DIE / LEVEL FLOW ----
+function die(){
+  dead = true;
   playSound(deathSound);
   applyScreenShake(14, 800);
-  createParticles(player.x, player.y, 20, {r:255,g:50,b:0}); 
+  createParticles(player.x, player.y, 20, { r:255, g:50, b:0 });
 }
-
-function checkAchievements() {
+function checkAchievements(){
   const levelTime = time;
-  
-  // Speedrunner: < 30s
-  if(levelTime < 30 && !unlockedAchievements.speedrunner) {
-    unlockedAchievements.speedrunner = true;
-    score += achievements.speedrunner.score;
-  }
-  
-  // Survivor: > 50% health
-  if(player.health > 50 && !unlockedAchievements.survivor) {
-    unlockedAchievements.survivor = true;
-    score += achievements.survivor.score;
-  }
-  
-  // Perfect Run: no damage
-  if(player.health === 100 && !unlockedAchievements.perfectRun) {
-    unlockedAchievements.perfectRun = true;
-    score += achievements.perfectRun.score;
-  }
-  
+  if(levelTime < 30 && !unlockedAchievements.speedrunner){ unlockedAchievements.speedrunner = true; score += achievements.speedrunner.score; }
+  if(player.health > 50 && !unlockedAchievements.survivor){ unlockedAchievements.survivor = true; score += achievements.survivor.score; }
+  if(player.health === 100 && !unlockedAchievements.perfectRun){ unlockedAchievements.perfectRun = true; score += achievements.perfectRun.score; }
   localStorage.setItem("achievements", JSON.stringify(unlockedAchievements));
 }
-
 function nextLevel(){
   checkAchievements();
   playSound(goalSound);
-  createParticles(player.x, player.y, 30, {r:255,g:215,b:0});
+  createParticles(player.x, player.y, 30, { r:255, g:215, b:0 });
   score += 500 + (time * 10);
   levelIndex++;
-  if(levelIndex>=levels.length){ 
-    gameState="end"; 
-    bestTime=Math.min(bestTime||999,time);
-    
-    // Leaderboard Update
-    leaderboard.push({ name: "Player", score: score, time: time, date: new Date().toLocaleDateString() });
+  if(levelIndex >= levels.length){
+    gameState = "end";
+    bestTime = Math.min(bestTime || 999, time);
+    leaderboard.push({ name: "Player", score, time, date: new Date().toLocaleDateString() });
     leaderboard.sort((a,b) => b.score - a.score);
-    leaderboard = leaderboard.slice(0, 10);
+    leaderboard = leaderboard.slice(0,10);
     localStorage.setItem("leaderboard", JSON.stringify(leaderboard));
-    
-    // Master Vampire Achievement
-    if(!unlockedAchievements.allLevels) {
-      unlockedAchievements.allLevels = true;
-      score += achievements.allLevels.score;
-      localStorage.setItem("achievements", JSON.stringify(unlockedAchievements));
-    }
-    
-    return; 
+    if(!unlockedAchievements.allLevels){ unlockedAchievements.allLevels = true; score += achievements.allLevels.score; localStorage.setItem("achievements", JSON.stringify(unlockedAchievements)); }
+    return;
   }
-  map=levels[levelIndex];
+  map = levels[levelIndex];
   resetPlayer();
-  difficulty = Math.min(3, Math.floor(levelIndex/2) + 1);
+  difficulty = Math.min(3, Math.floor(levelIndex / 2) + 1);
 }
 
-function resetPlayer(){ 
-  player.x=2.5*TILE; 
-  player.y=1.5*TILE; 
-  player.z=0; 
-  player.vz=0; 
-  player.health=100;
-  dead=false; 
-  startTime=performance.now(); 
-  player.lightRadius = 220;
-  player.lightTimer = 0;
-}
-
-// ---- UI ----
+// ---- UI (draw overlays) ----
 function drawUI(){
-  // Settings Menu
-  if(gameState === "settings") {
+  if(gameState === "settings"){
     ctx.fillStyle = "rgba(0,0,0,0.95)";
     ctx.fillRect(0,0,W,H);
-    
-    // Titel
-    ctx.fillStyle = "white";
-    ctx.font = "bold 50px Arial";
-    ctx.textAlign = "center";
+    ctx.fillStyle = "white"; ctx.font = "bold 40px Arial"; ctx.textAlign = "center";
     ctx.fillText("⚙️ SETTINGS", W/2, 80);
-    
-    // Language Section
-    ctx.font = "28px Arial";
-    ctx.fillStyle = "#FFD700";
-    ctx.fillText("🌐 Language", W/2, 160);
-    
-    ctx.font = "22px Arial";
-    ctx.fillStyle = "white";
-    
-    // Deutsch Button
-    ctx.fillStyle = language === "de" ? "rgba(100,200,100,0.8)" : "rgba(100,100,150,0.6)";
-    ctx.fillRect(W/2 - 300, 200, 120, 50);
-    ctx.strokeStyle = language === "de" ? "rgba(200,255,200,1)" : "rgba(150,150,200,1)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(W/2 - 300, 200, 120, 50);
-    ctx.fillStyle = "white";
-    ctx.font = "20px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText("🇩🇪 Deutsch", W/2 - 240, 230);
-    
-    // English Button
-    ctx.fillStyle = language === "en" ? "rgba(100,200,100,0.8)" : "rgba(100,100,150,0.6)";
-    ctx.fillRect(W/2 + 180, 200, 120, 50);
-    ctx.strokeStyle = language === "en" ? "rgba(200,255,200,1)" : "rgba(150,150,200,1)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(W/2 + 180, 200, 120, 50);
-    ctx.fillStyle = "white";
-    ctx.fillText("🇬🇧 English", W/2 + 240, 230);
-    
-    // Sound Section
-    ctx.font = "28px Arial";
-    ctx.fillStyle = "#FFD700";
-    ctx.textAlign = "center";
-    ctx.fillText("🔊 Sound", W/2, 320);
-    
-    ctx.font = "22px Arial";
-    ctx.fillStyle = soundEnabled ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
-    ctx.fillText(soundEnabled ? "✓ ON" : "✗ OFF", W/2, 365);
-    
-    // Music Section
-    ctx.fillStyle = "#FFD700";
-    ctx.font = "28px Arial";
-    ctx.fillText("🎵 Music", W/2, 430);
-    
-    ctx.font = "22px Arial";
-    ctx.fillStyle = musicEnabled ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
-    ctx.fillText(musicEnabled ? "✓ ON" : "✗ OFF", W/2, 475);
-    
-    // Controls Hint
-    ctx.font = "18px Arial";
-    ctx.fillStyle = "rgba(200,200,200,0.8)";
-    ctx.fillText("M = Sound Toggle | U = Music Toggle | S = Close | Click Language to Change", W/2, 540);
-    
-    // Back Button
-    ctx.fillStyle = "rgba(200,100,100,0.7)";
-    ctx.fillRect(W/2 - 150, H - 100, 300, 60);
-    ctx.strokeStyle = "rgba(255,150,150,1)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(W/2 - 150, H - 100, 300, 60);
-    ctx.fillStyle = "white";
-    ctx.font = "bold 24px Arial";
-    ctx.fillText("⬅ BACK TO MENU (S)", W/2, H - 65);
-    
+    ctx.textAlign = "left";
+    return;
+  }
+  if(paused){
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = "white"; ctx.font = "60px Arial"; ctx.textAlign = "center";
+    ctx.fillText("PAUSIERT", W/2, H/2 - 40);
     ctx.textAlign = "left";
     return;
   }
 
-  // Pause Overlay
-  if(paused) {
-    ctx.fillStyle = "rgba(0,0,0,0.7)";
-    ctx.fillRect(0,0,W,H);
-    ctx.fillStyle = "white";
-    ctx.font = "60px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText("PAUSIERT", W/2, H/2-40);
-    ctx.font = "24px Arial";
-    ctx.fillText("P = Fortsetzen | M = Sound | S = Einstellungen", W/2, H/2+40);
-    ctx.textAlign = "left";
-    return;
-  }
-
-  // HUD Background
+  // HUD
   ctx.fillStyle = "rgba(0,0,0,0.4)";
-  ctx.fillRect(0, 0, 300, 100);
-  
-  // Text
-  ctx.fillStyle="white"; 
-  ctx.font="bold 20px Arial";
-  ctx.fillText("Level: "+(levelIndex+1), 20, 30);
-  ctx.fillText("Time: "+time+"s", 20, 55);
-  ctx.fillText("Score: "+score, 20, 80);
+  ctx.fillRect(0,0,300,100);
+  ctx.fillStyle = "white"; ctx.font = "bold 20px Arial";
+  ctx.fillText("Level: " + (levelIndex + 1), 20, 30);
+  ctx.fillText("Time: " + time + "s", 20, 55);
+  ctx.fillText("Score: " + score, 20, 80);
 
-  // Health Bar
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(W-220, 10, 210, 30);
+  // Health
+  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(W - 220, 10, 210, 30);
   ctx.fillStyle = player.health > 50 ? "rgba(0,255,0,0.8)" : player.health > 25 ? "rgba(255,165,0,0.8)" : "rgba(255,0,0,0.8)";
-  ctx.fillRect(W-210, 15, player.health*2, 20);
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(W-210, 15, 200, 20);
-  ctx.fillStyle = "white";
-  ctx.font = "bold 14px Arial";
-  ctx.fillText("Health: "+Math.ceil(player.health), W-180, 32);
-
-  // Schwierigkeitsanzeige
-  ctx.fillStyle="white";
-  ctx.font="14px Arial";
-  const diffText = difficulty === 1 ? "EASY" : difficulty === 2 ? "NORMAL" : "HARD";
-  ctx.fillText("Difficulty: "+diffText, 20, 105);
-
-  // Speed Boost Anzeige
-  if(player.speedBoost > 0){
-    ctx.fillStyle = `rgba(0,255,255,${player.speedBoost/300})`;
-    ctx.fillRect(0, H-10, (player.speedBoost/300)*100, 10);
-  }
+  ctx.fillRect(W - 210, 15, player.health * 2, 20);
+  ctx.strokeStyle = "white"; ctx.lineWidth = 2; ctx.strokeRect(W - 210, 15, 200, 20);
+  ctx.fillStyle = "white"; ctx.font = "bold 14px Arial"; ctx.fillText("Health: " + Math.ceil(player.health), W - 180, 32);
 
   // Minimap
   drawMinimap();
 
-  // Mobile Buttons zeichnen
-  if(showMobileControls) {
-    drawMobileButtons();
-  }
+  // Mobile buttons
+  if(showMobileControls) drawMobileButtons();
 
-  // Dead Screen
-  if(dead){ 
-    ctx.fillStyle="rgba(255,0,0,0.7)"; 
-    ctx.fillRect(0,0,W,H);
-    
-    ctx.fillStyle="rgba(255,50,50,1)"; 
-    ctx.font="bold 80px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText("💀 YOU BURNED ☀️ 💀", W/2, H/2-80);
-    
-    ctx.fillStyle="white";
-    ctx.font="40px Arial"; 
-    ctx.fillText("GAME OVER", W/2, H/2+20);
-    
-    ctx.fillStyle="rgba(255,255,100,0.9)";
-    ctx.font="30px Arial"; 
-    ctx.fillText("Final Score: "+score, W/2, H/2+100);
-    
-    ctx.fillStyle="rgba(100,255,100,0.8)";
-    ctx.font="24px Arial"; 
-    ctx.fillText("Press R to Retry Level | CLICK for Menu", W/2, H/2+160); 
-    
-    if(keys["r"]) {
-      // Nur das Level neu starten - Score und Difficulty bleiben!
-      dead = false;
-      player.health = 100;
-      player.x = 2.5*TILE;
-      player.y = 1.5*TILE;
-      player.z = 0;
-      player.vz = 0;
-      player.speedBoost = 0;
-      startTime = performance.now();
-      guards = [];
-      particles = [];
-      powerUps = [];
-      const guardCount = 1 + difficulty;
-      for(let i=0; i<guardCount; i++){
-        guards.push({
-          x: Math.random()*map[0].length*TILE,
-          y: Math.random()*map.length*TILE,
-          health: 50,
-          speed: 0.5 + difficulty*0.3,
-          angle: Math.random()*Math.PI*2,
-          range: 3
-        });
-      }
-    }
+  // Dead screen
+  if(dead){
+    ctx.fillStyle = "rgba(255,0,0,0.7)"; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = "white"; ctx.font = "bold 60px Arial"; ctx.textAlign = "center";
+    ctx.fillText("💀 YOU BURNED ☀️", W/2, H/2 - 40);
+    ctx.textAlign = "left";
   }
 }
 
-// ---- MINIMAP ----
+// ---- MINIMAP & MOBILE DRAW ----
 function drawMinimap(){
-  const mmSize = 120;
-  const mmX = W - mmSize - 10;
-  const mmY = 50;
+  const mmSize = 120; const mmX = W - mmSize - 10; const mmY = 50;
   const scale = mmSize / (Math.max(map[0].length, map.length) * TILE);
-
-  // Background
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
-  ctx.fillRect(mmX, mmY, mmSize, mmSize);
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(mmX, mmY, mmSize, mmSize);
-
-  // Tiles
-  for(let y=0; y<map.length; y++){
-    for(let x=0; x<map[y].length; x++){
-      const px = mmX + x*TILE*scale;
-      const py = mmY + y*TILE*scale;
-      const size = TILE*scale;
-
-      if(map[y][x] === 1){ // Schatten
-        ctx.fillStyle = "rgba(100,100,150,0.8)";
-      } else if(map[y][x] === 0){ // Licht
-        ctx.fillStyle = "rgba(255,200,100,0.6)";
-      } else if(map[y][x] === 2){ // Ziel
-        ctx.fillStyle = "rgba(255,100,0,0.9)";
-      }
-      ctx.fillRect(px, py, size, size);
-    }
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(mmX, mmY, mmSize, mmSize);
+  ctx.strokeStyle = "white"; ctx.strokeRect(mmX, mmY, mmSize, mmSize);
+  for(let y=0;y<map.length;y++) for(let x=0;x<map[y].length;x++){
+    const px = mmX + x * TILE * scale; const py = mmY + y * TILE * scale; const size = TILE * scale;
+    ctx.fillStyle = map[y][x] === 1 ? "rgba(100,100,150,0.8)" : map[y][x] === 0 ? "rgba(255,200,100,0.6)" : "rgba(255,100,0,0.9)";
+    ctx.fillRect(px, py, size, size);
   }
-
-  // Spieler
-  ctx.fillStyle = "rgba(0,255,0,0.9)";
-  ctx.beginPath();
-  ctx.arc(mmX + player.x*scale, mmY + player.y*scale, 3, 0, Math.PI*2);
-  ctx.fill();
-
-  // Wächter
-  guards.forEach(g => {
-    ctx.fillStyle = "rgba(255,0,0,0.8)";
-    ctx.beginPath();
-    ctx.arc(mmX + g.x*scale, mmY + g.y*scale, 2, 0, Math.PI*2);
-    ctx.fill();
-  });
+  ctx.fillStyle = "rgba(0,255,0,0.9)"; ctx.beginPath(); ctx.arc(mmX + player.x * scale, mmY + player.y * scale, 3, 0, Math.PI*2); ctx.fill();
+  guards.forEach(g => { ctx.fillStyle = "rgba(255,0,0,0.8)"; ctx.beginPath(); ctx.arc(mmX + g.x * scale, mmY + g.y * scale, 2, 0, Math.PI*2); ctx.fill(); });
 }
 
-// ---- MOBILE BUTTONS DRAWING ----
-function drawMobileButtons() {
+function drawMobileButtons(){
   updateMobileButtonPositions();
-  
-  Object.keys(mobileButtons).forEach(btn => {
-    const b = mobileButtons[btn];
-    
-    // Button Background
+  for(const k in mobileButtons){
+    const b = mobileButtons[k];
     ctx.fillStyle = b.pressed ? "rgba(100,255,100,0.8)" : "rgba(100,100,100,0.6)";
     ctx.fillRect(b.x, b.y, b.w, b.h);
-    
-    // Button Border
     ctx.strokeStyle = b.pressed ? "rgba(255,255,255,1)" : "rgba(200,200,200,0.6)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
-    
-    // Button Label
-    ctx.fillStyle = "white";
-    ctx.font = "bold 20px Arial";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+    ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = "white"; ctx.font = "bold 20px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(b.label, b.x + b.w/2, b.y + b.h/2);
-  });
-  
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
+  }
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
 }
 
-// ---- DRAW ----
-let lastFrame = performance.now();
-function draw(){
+// ---- MAIN DRAW LOOP ----
+function drawFrame(){
   const now = performance.now();
-  const delta = now - lastFrame;
-  lastFrame = now;
-
-  // update logic with delta (ms)
+  const delta = now - lastTime; lastTime = now;
   update(delta);
 
-  // Save and apply screen shake
+  // Clear background
+  ctx.clearRect(0, 0, W, H);
+
+  // Apply screen shake transform
   ctx.save();
-  // Random shake while active
-  if(camera.shakeTimer > 0) {
+  if(camera.shakeTimer > 0){
     const s = camera.shake * (camera.shakeTimer / 400);
-    const sx = (Math.random()-0.5) * s;
-    const sy = (Math.random()-0.5) * s;
+    const sx = (Math.random() - 0.5) * s;
+    const sy = (Math.random() - 0.5) * s;
     ctx.translate(sx, sy);
   }
 
-  // Settings Menu Handler
-  if(gameState === "settings") {
-    if(keys["q"]) mouseSensitivity = Math.max(0.0001, mouseSensitivity - 0.0001);
-    if(keys["e"]) mouseSensitivity = Math.min(0.01, mouseSensitivity + 0.0001);
-    if(keys["m"]) soundEnabled = !soundEnabled;
-    if(keys["u"]) musicEnabled = !musicEnabled;
-  }
-  
-  if(gameState === "language") {
-    // Sprachauswahl Screen
-    const gradient = ctx.createLinearGradient(0,0,0,H);
-    gradient.addColorStop(0,"#0a0e27");
-    gradient.addColorStop(1,"#1a1f3a");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,W,H);
-    
-    // Titel
-    ctx.fillStyle = "white";
-    ctx.font = "60px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(t("selectLang"), W/2, H/2 - 100);
-    
-    // Deutsch Button
-    ctx.fillStyle = "rgba(100,150,255,0.7)";
-    ctx.fillRect(W/2 - 180, H/2 - 20, 150, 80);
-    ctx.strokeStyle = "rgba(150,200,255,1)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(W/2 - 180, H/2 - 20, 150, 80);
-    ctx.fillStyle = "white";
-    ctx.font = "30px Arial";
-    ctx.fillText("🇩🇪 Deutsch", W/2 - 105, H/2 + 35);
-    
-    // English Button
-    ctx.fillStyle = "rgba(150,100,255,0.7)";
-    ctx.fillRect(W/2 + 30, H/2 - 20, 150, 80);
-    ctx.strokeStyle = "rgba(200,150,255,1)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(W/2 + 30, H/2 - 20, 150, 80);
-    ctx.fillStyle = "white";
-    ctx.fillText("🇬🇧 English", W/2 + 105, H/2 + 35);
-    
-    ctx.textAlign = "left";
-    ctx.restore();
-    requestAnimationFrame(draw);
-    return;
-  }
-  
-  if(gameState==="menu"){
-    // Premium Start Menu
-    const gradient = ctx.createLinearGradient(0,0,0,H);
-    gradient.addColorStop(0,"#0a0e27");
-    gradient.addColorStop(0.5,"#16213e");
-    gradient.addColorStop(1,"#0f3460");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,W,H);
-    
-    // Animated Background Effect
-    const t = performance.now()/1000;
-    for(let i = 0; i < 5; i++) {
-      const waveY = H * 0.3 + Math.sin(t + i)*30;
-      ctx.fillStyle = `rgba(255,100,100,${0.05 - i*0.01})`;
-      ctx.beginPath();
-      ctx.arc(W/2 + Math.cos(t + i)*100, waveY, 150 + i*50, 0, Math.PI*2);
-      ctx.fill();
-    }
+  // World rendering
+  drawSky();
+  castRays();
 
-    // Title
-    ctx.fillStyle = "white";
-    ctx.font = "bold 80px Arial";
-    ctx.textAlign = "center";
-    const glow = Math.sin(t*2)*20 + 50;
-    ctx.shadowColor = "rgba(255,100,100,0.5)";
-    ctx.shadowBlur = glow;
-    ctx.fillText("🧛 SHADOWBOUND 🧛", W/2, 120);
-    ctx.shadowBlur = 0;
-    
-    // Subtitle
-    ctx.font = "28px Arial";
-    ctx.fillStyle = "rgba(255,150,150,0.9)";
-    ctx.fillText("Stay in the shadows. Survive the light.", W/2, 180);
-    
-    // Play Button
-    const playY = H/2 - 50;
-    ctx.fillStyle = "rgba(100,255,100,0.8)";
-    ctx.fillRect(W/2 - 150, playY, 300, 80);
-    ctx.strokeStyle = "rgba(150,255,150,1)";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(W/2 - 150, playY, 300, 80);
-    ctx.fillStyle = "white";
-    ctx.font = "bold 40px Arial";
-    ctx.fillText("▶ PLAY", W/2, playY + 55);
-    
-    // Settings Button
-    const settingsY = H/2 + 60;
-    ctx.fillStyle = "rgba(100,150,255,0.8)";
-    ctx.fillRect(W/2 - 150, settingsY, 300, 80);
-    ctx.strokeStyle = "rgba(150,200,255,1)";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(W/2 - 150, settingsY, 300, 80);
-    ctx.fillStyle = "white";
-    ctx.font = "bold 40px Arial";
-    ctx.fillText("⚙ SETTINGS", W/2, settingsY + 55);
-    
-    // Info Text
-    ctx.font = "16px Arial";
-    ctx.fillStyle = "rgba(200,200,200,0.7)";
-    ctx.textAlign = "center";
-    ctx.fillText("Level 1-5 | Difficulty Scaling | Leaderboard", W/2, H - 50);
-    ctx.fillText("Use W/A/S/D to move, SPACE to jump, hide from light!", W/2, H - 20);
-    
-    ctx.textAlign = "left";
-    ctx.restore();
-    requestAnimationFrame(draw);
-    return;
-  }
-
-  if(gameState==="end"){
-    // End Screen
-    const gradient = ctx.createLinearGradient(0,0,0,H);
-    gradient.addColorStop(0,"#1a0a0a");
-    gradient.addColorStop(1,"#2a1a1a");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0,0,W,H);
-
-    ctx.fillStyle="white";
-    ctx.font="60px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText("🏆 SPIEL ABGESCHLOSSEN", W/2, H/2-120);
-    ctx.font="40px Arial";
-    ctx.fillText("Final Score: "+score, W/2, H/2-20);
-    ctx.fillText("Best Time: "+bestTime+"s", W/2, H/2+50);
-    
-    // Achievements anzeigen
-    ctx.font="24px Arial";
-    ctx.fillText("🏅 Achievements:", W/2, H/2+120);
-    let achY = H/2+150;
-    Object.keys(unlockedAchievements).forEach(key => {
-      if(unlockedAchievements[key]) {
-        ctx.font="18px Arial";
-        ctx.fillText(achievements[key].name + " - " + achievements[key].desc, W/2, achY);
-        achY += 25;
-      }
-    });
-    
-    // Leaderboard
-    ctx.font="24px Arial";
-    ctx.fillText("🎯 Top Scores:", 50, H/2+120);
-    leaderboard.slice(0, 5).forEach((entry, i) => {
-      ctx.font="16px Arial";
-      ctx.textAlign = "left";
-      ctx.fillText(`${i+1}. ${entry.score} pts (${entry.time}s)`, 50, H/2+150+i*25);
-    });
-    
-    ctx.textAlign = "center";
-    ctx.font="24px Arial";
-    ctx.fillStyle="rgba(100,255,100,0.8)";
-    ctx.fillText("KLICKE ZUM NEUSTARTEN", W/2, H-50);
-    ctx.textAlign = "left";
-    ctx.restore();
-    requestAnimationFrame(draw);
-    return;
-  }
-
-  // Hauptspiel-Rendering
-  drawSky();   // Himmel + Wolken
-  castRays();  // Wände / Licht / Schatten
-
-  // Licht-Maske um die Mitte (stellt Licht um Spieler dar)
-  // Wir legen eine halb-Transparente dunkle Ebene darüber und schneiden ein Kreislicht in der Bildschirmmitte aus.
-  // --- Ersetze den "Licht-Maske um die Mitte" Abschnitt in draw() durch diesen Block ---
-  // Licht-Maske um die Mitte (stellt Licht um Spieler dar)
+  // Dark overlay + light hole (centered on screen to simulate player's light)
   ctx.save();
-
-  // Full dark overlay
+  // Draw semi-opaque overlay
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = "rgba(0,0,0,0.6)";
   ctx.fillRect(0, 0, W, H);
 
-  // radial gradient for soft edges (we WANT an opaque center in the source so destination-out clears center)
-  // Clamp radius so it never exceeds the canvas
-  let rad = Math.min(player.lightRadius, Math.max(W, H) * 1.5);
-  // create radial gradient where center is OPAQUE and outer is TRANSPARENT
-  const grad = ctx.createRadialGradient(W/2, H/2, Math.max(1, rad * 0.1), W/2, H/2, rad);
-  grad.addColorStop(0, 'rgba(0,0,0,1)');   // opaque in center -> destination-out will erase center
-  grad.addColorStop(1, 'rgba(0,0,0,0)');   // transparent at edge
+  // Prepare radial gradient: center OPAQUE -> outer TRANSPARENT
+  let rad = player.lightRadius;
+  rad = Math.max(20, Math.min(rad, Math.max(W, H) * 1.5)); // clamp
+  const grad = ctx.createRadialGradient(W/2, H/2, Math.max(1, rad * 0.05), W/2, H/2, rad);
+  grad.addColorStop(0, 'rgba(0,0,0,1)'); // opaque center: destination-out will cut here
+  grad.addColorStop(1, 'rgba(0,0,0,0)'); // transparent edge
 
-  // Cut the light hole: destination-out makes destination transparent where source is opaque
+  // Cut hole: destination-out makes destination transparent where source is opaque
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.arc(W/2, H/2, rad, 0, Math.PI*2);
+  ctx.arc(W/2, H/2, rad, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore(); // restore to before overlay
 
-  // restore to normal drawing mode
-  ctx.restore();// restore after shake translate
+  // Fog / UI
+  drawFog();
+  drawUI();
 
-  requestAnimationFrame(draw);
+  // Restore camera transform
+  ctx.restore();
+
+  requestAnimationFrame(drawFrame);
 }
-requestAnimationFrame(draw);
+lastTime = performance.now();
+requestAnimationFrame(drawFrame);
 
-// ---- POKI INTEGRATION (für später) ----
-// PokiSDK.gameLoadingFinished()
-// PokiSDK.gameLoadingStart()
-// PokiSDK.gameplayStart()
-// PokiSDK.gameplayStop()
+// ---- INITIAL MENU INTERACTION (mouse click) ----
+canvas.addEventListener("click", (e) => {
+  if(gameState === "menu"){
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 - 50 && y < H/2 + 30){
+      initAudio();
+      gameState = "play"; startTime = performance.now(); initLevel(); playBackgroundMusic();
+    } else if(x > W/2 - 150 && x < W/2 + 150 && y > H/2 + 60 && y < H/2 + 140){
+      gameState = "settings";
+    }
+  } else if(gameState === "end"){
+    gameState = "menu"; levelIndex = 0; map = levels[0]; score = 0; difficulty = 1; resetPlayer();
+  } else if(dead){
+    gameState = "menu"; levelIndex = 0; map = levels[0]; score = 0; difficulty = 1; dead = false; resetPlayer();
+  }
+});
+
+// ---- SAVE HOOKS ----
+window.addEventListener("beforeunload", () => {
+  localStorage.setItem("achievements", JSON.stringify(unlockedAchievements));
+  localStorage.setItem("leaderboard", JSON.stringify(leaderboard));
+});
 
